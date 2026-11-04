@@ -2381,29 +2381,31 @@ local function dockRect(side)
 		local h = open and MS.clamp(L.h, 120, WIN_H - y) or UI.HEADER_H
 		return x, y, w, h
 	end
+	-- Default: Scene and Properties stacked down the left edge, File / Rules /
+	-- Stats... in the bottom-right corner, the 3D view free in the middle
+	sideW = MS.clamp(floor(WIN_W * 0.1875), floor(250 * UI.k), floor(400 * UI.k))
+	local avail = bottom - top
+	local leftH = floor(avail * 0.44)
 	if (side == "left") then
-		return 0, top, sideW, open and (bottom - top) or UI.HEADER_H
+		return 0, top, sideW, open and leftH or UI.HEADER_H
 	elseif (side == "right") then
-		return WIN_W - sideW, top, sideW, open and (bottom - top) or UI.HEADER_H
+		-- Sits under the Scene panel and moves up when that one is tucked away
+		local y = top + (UI.dockState.left.open and leftH or UI.HEADER_H)
+		return 0, y, sideW, open and (bottom - y) or UI.HEADER_H
 	end
-	-- Bottom: docked between the side panels, flush with the status line
-	do
-		local bw = WIN_W - sideW * 2
-		local bh = open and math.min(floor(340 * UI.k), floor((bottom - top) * 0.45)) or UI.HEADER_H
-		return sideW, bottom - bh, bw, bh
+	local bw = MS.clamp(floor(WIN_W * 0.31), floor(380 * UI.k), WIN_W - sideW - 20)
+	local bh = open and floor(avail * 0.54) or UI.HEADER_H
+	return WIN_W - bw, bottom - bh, bw, bh
+end
+
+---Rebuilds a panel after it was opened / tucked away. The default Properties
+---panel sits under the Scene panel, so it follows when Scene changes size.
+function UI.rebuildAfterToggle(side)
+	UI.buildDock(side)
+	local placed = MS.settings.layout and MS.settings.layout.right and MS.settings.layout.right.w
+	if (side == "left" and not placed and UI.dockEls.right) then
+		UI.buildDock("right")
 	end
-	-- Bottom: between the side panels when there's room, centered otherwise
-	local bw = WIN_W - (sideW + 12) * 2 - 12
-	local bx = sideW + 18
-	if (bw < 420) then
-		bw = math.min(620, WIN_W - 40)
-		bx = floor((WIN_W - bw) / 2)
-	else
-		bw = math.min(bw, 760)
-		bx = floor((WIN_W - bw) / 2)
-	end
-	local bh = open and math.min(360, floor((bottom - top) * 0.6)) or UI.HEADER_H
-	return bx, bottom - bh, bw, bh
 end
 
 function UI.buildDock(side)
@@ -2445,13 +2447,13 @@ function UI.buildDock(side)
 				st.active, st.open = id, true
 			end
 			UI.linkPick = nil
-			UI.buildDock(side)
+			UI.rebuildAfterToggle(side)
 		end, { active = st.open and st.active == id, scale = 0.46,
 			tip = (st.open and st.active == id) and "Click again to tuck this panel away" or nil })
 	end
 	button(inner, inner.size.w - ROW - 2, 2, ROW, ROW, st.open and "-" or "+", function()
 		st.open = not st.open
-		UI.buildDock(side)
+		UI.rebuildAfterToggle(side)
 	end, { tip = st.open and "Tuck this panel away" or "Open this panel" })
 
 	if (not st.open) then return end
