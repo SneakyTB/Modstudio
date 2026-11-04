@@ -73,6 +73,29 @@ function MS.nodeName(key)
 	return MS.objName(n)
 end
 
+---Names objects / triangles. Several at once get "Name 1", "Name 2"...
+---in scene order. An empty name puts the default name back.
+function MS.renameNodes(keys, name)
+	if (#keys == 0) then return end
+	name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	MS.pushUndo("Rename")
+	for i, key in ipairs(keys) do
+		local d = MS.nodeData(key)
+		if (d) then
+			if (name == "") then d.name = nil
+			elseif (#keys == 1) then d.name = name
+			else d.name = name .. " " .. i end
+		end
+	end
+	MS.changed = true
+	if (name == "") then
+		MS.toast("Name cleared")
+	else
+		MS.toast(#keys == 1 and ("Renamed to \"" .. name .. "\"") or ("Renamed " .. #keys .. " items " .. name .. " 1 - " .. #keys))
+	end
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+end
+
 function MS.nodePos(key)
 	local kind, n = parseKey(key)
 	if (kind == "t") then return MS.triCentroid(n) end

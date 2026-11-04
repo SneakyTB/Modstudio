@@ -160,6 +160,17 @@ MS.DEFAULT_SETTINGS = {
 	layout = {},            -- moved / resized panels: side -> { x, y, w, h }
 	uiScale = 1,            -- 0.85 / 1 / 1.15 / 1.3
 	accent = "pink",        -- highlight color (see UI.ACCENTS)
+	accentCustom = { 0.9, 0.62, 0.62 },
+	theme = "toribash",     -- main panel colour (see UI.THEMES)
+	themeCustom = { 0.4, 0.4, 0.45 },
+	squareCorners = false,
+	panelOpacity = 1,       -- 0.3 .. 1, panel bodies only
+	selColor = "cyan",      -- 3D view highlight colours (see MS.VIEW_COLORS)
+	primaryColor = "gold",
+	hoverColor = "yellow",
+	hoverOutline = "white",
+	outlineWidth = 1.5,
+	gizmoWidth = 1,
 	folded = { ["obj:thrust"] = true, ["obj:trigger"] = true, ["players:thrust"] = true, ["players:trigger"] = true,
 		["players:tools"] = true, ["joints:trigger"] = true, ["joints:tools"] = true },
 	firstRun = true,

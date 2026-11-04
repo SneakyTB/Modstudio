@@ -18,6 +18,42 @@ local AXIS_COLORS = {
 local HOVER_COLOR = { 1, 0.85, 0.2 }
 local SELECT_COLOR = { 0.35, 0.9, 1 }
 local PRIMARY_COLOR = { 1, 0.85, 0.3 }
+local HOVER_OUTLINE = { 1, 1, 1 }
+
+-- Colours you can pick for the selection / hover highlights (Settings > 3D view)
+MS.VIEW_COLORS = {
+	{ "cyan", "Cyan", { 0.35, 0.9, 1 } },
+	{ "gold", "Gold", { 1, 0.85, 0.3 } },
+	{ "yellow", "Yellow", { 1, 0.85, 0.2 } },
+	{ "white", "White", { 1, 1, 1 } },
+	{ "pink", "Pink", { 1, 0.5, 0.8 } },
+	{ "green", "Green", { 0.45, 1, 0.45 } },
+	{ "orange", "Orange", { 1, 0.55, 0.15 } },
+	{ "purple", "Purple", { 0.75, 0.55, 1 } }
+}
+
+local function viewColor(name, fallback)
+	for _, c in ipairs(MS.VIEW_COLORS) do
+		if (c[1] == name) then return c[3] end
+	end
+	return fallback
+end
+
+---Copies the chosen highlight colours into the tables the drawing code uses
+function MS.applyViewColors()
+	local st = MS.settings or {}
+	for _, pair in ipairs({
+		{ SELECT_COLOR, viewColor(st.selColor, { 0.35, 0.9, 1 }) },
+		{ PRIMARY_COLOR, viewColor(st.primaryColor, { 1, 0.85, 0.3 }) },
+		{ HOVER_COLOR, viewColor(st.hoverColor, { 1, 0.85, 0.2 }) },
+		{ HOVER_OUTLINE, viewColor(st.hoverOutline, { 1, 1, 1 }) }
+	}) do
+		pair[1][1], pair[1][2], pair[1][3] = pair[2][1], pair[2][2], pair[2][3]
+	end
+end
+
+local function outlineW() return MS.clamp(tonumber(MS.settings.outlineWidth) or 1.5, 0.5, 5) end
+local function gizmoW() return MS.clamp(tonumber(MS.settings.gizmoWidth) or 1, 0.5, 3) end
 local HIER_COLOR = { 0.80, 0.55, 1 }
 local AXIS_NAMES = { "X", "Y", "Z" }
 
@@ -845,7 +881,7 @@ function MS.buildFrame()
 		else
 			local ol = objOutline(G.hoverObj, right)
 			if (ol) then
-				ol.color = { 1, 1, 1 }
+				ol.color = HOVER_OUTLINE
 				ol.alpha = 0.45
 				table.insert(F.outlines, ol)
 			end
@@ -866,7 +902,7 @@ function MS.buildFrame()
 	if (tabOpen("players")) then
 		if (MS.bodySel) then bodyOutline(MS.bodySel.p, MS.bodySel.b, PRIMARY_COLOR) end
 		if (G.hoverBody and not (MS.bodySel and MS.bodySel.p == G.hoverBody.p and MS.bodySel.b == G.hoverBody.b)) then
-			bodyOutline(G.hoverBody.p, G.hoverBody.b, { 1, 1, 1 }, 0.5)
+			bodyOutline(G.hoverBody.p, G.hoverBody.b, HOVER_OUTLINE, 0.5)
 		end
 	end
 	if (tabOpen("joints") and MS.jointSel) then
@@ -1221,27 +1257,29 @@ end
 function MS.draw2d()
 	local F = MS.frame
 	if (not F) then return end
+	MS.applyViewColors()
+	local ow, gw = outlineW(), gizmoW()
 
 	-- Outlines
 	for _, ol in ipairs(F.outlines) do
 		local c = ol.color
 		set_color(c[1], c[2], c[3], ol.alpha or 0.95)
-		for _, s in ipairs(ol.segs or {}) do pcall(draw_line, s[1], s[2], s[3], s[4], 1.5) end
-		if (ol.circle) then ring2d(ol.circle[1], ol.circle[2], ol.circle[3], 1.5) end
+		for _, s in ipairs(ol.segs or {}) do pcall(draw_line, s[1], s[2], s[3], s[4], ow) end
+		if (ol.circle) then ring2d(ol.circle[1], ol.circle[2], ol.circle[3], ow) end
 	end
 	if (F.hoverTri) then
-		set_color(1, 1, 1, 0.5)
+		set_color(HOVER_OUTLINE[1], HOVER_OUTLINE[2], HOVER_OUTLINE[3], 0.5)
 		local e = F.hoverTri
 		for i = 1, 3 do
 			local a, b = e[i], e[i % 3 + 1]
-			if (a.ok and b.ok) then line2d(a, b, 1.5) end
+			if (a.ok and b.ok) then line2d(a, b, ow) end
 		end
 	end
 	for _, e in pairs(F.triEdges) do
 		set_color(SELECT_COLOR[1], SELECT_COLOR[2], SELECT_COLOR[3], 1)
 		for i = 1, 3 do
 			local a, b = e[i], e[i % 3 + 1]
-			if (a.ok and b.ok) then line2d(a, b, 2) end
+			if (a.ok and b.ok) then line2d(a, b, ow + 0.5) end
 		end
 	end
 	-- Triangle corner handles
@@ -1308,9 +1346,9 @@ function MS.draw2d()
 					local hovered = sameHandle(hov, g.tool == "move" and "axis" or "saxis", k)
 					local col = axisColor(k, hovered)
 					set_color(0, 0, 0, 0.45)
-					pcall(draw_line, c[1], c[2], a.tip[1], a.tip[2], hovered and 6 or 5)
+					pcall(draw_line, c[1], c[2], a.tip[1], a.tip[2], (hovered and 6 or 5) * gw)
 					set_color(col[1], col[2], col[3], 1)
-					pcall(draw_line, c[1], c[2], a.tip[1], a.tip[2], hovered and 4 or 3)
+					pcall(draw_line, c[1], c[2], a.tip[1], a.tip[2], (hovered and 4 or 3) * gw)
 					if (g.tool == "move") then
 						set_color(0, 0, 0, 0.5)
 						disk(a.tip[1], a.tip[2], 8)
@@ -1332,7 +1370,7 @@ function MS.draw2d()
 						local hovered = sameHandle(hov, "plane", k)
 						local col = axisColor(k, hovered)
 						set_color(col[1], col[2], col[3], hovered and 1 or 0.75)
-						for n = 1, 4 do line2d(pl.q[n], pl.q[n % 4 + 1], hovered and 3 or 2) end
+						for n = 1, 4 do line2d(pl.q[n], pl.q[n % 4 + 1], (hovered and 3 or 2) * gw) end
 						local cx = (pl.q[1][1] + pl.q[3][1]) / 2
 						local cy = (pl.q[1][2] + pl.q[3][2]) / 2
 						set_color(col[1], col[2], col[3], hovered and 0.7 or 0.35)
@@ -1354,7 +1392,7 @@ function MS.draw2d()
 					set_color(col[1], col[2], col[3], hovered and 1 or 0.85)
 					for n = 1, #ring.pts - 1 do
 						local a, b = ring.pts[n], ring.pts[n + 1]
-						if (a.ok and b.ok) then line2d(a, b, hovered and 4 or 2.5) end
+						if (a.ok and b.ok) then line2d(a, b, (hovered and 4 or 2.5) * gw) end
 					end
 				end
 			end
@@ -2047,7 +2085,8 @@ local KEYS = {
 	pgup = { [1073741899] = true, [280] = true },
 	pgdn = { [1073741902] = true, [281] = true },
 	del = { [127] = true, [1073741900] = true },
-	f1 = { [1073741882] = true, [282] = true }
+	f1 = { [1073741882] = true, [282] = true },
+	f2 = { [1073741883] = true, [283] = true }
 }
 
 local consumed = {}
@@ -2131,6 +2170,8 @@ function MS.onKeyDown(key)
 		MS.focusSelection()
 	elseif (ch == "h" or KEYS.f1[key]) then
 		MS.UI.toggleHelp()
+	elseif (KEYS.f2[key]) then
+		MS.UI.renameNodes()
 	elseif (KEYS.del[key] or key == 8) then
 		MS.deleteSelected()
 	elseif (ch == "p") then

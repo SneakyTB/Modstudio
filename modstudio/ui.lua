@@ -31,8 +31,31 @@ UI.ACCENTS = {
 	{ "gold", "Gold", { 0.98, 0.78, 0.36, 1 } },
 	{ "blue", "Blue", { 0.5, 0.66, 0.98, 1 } },
 	{ "green", "Green", { 0.55, 0.85, 0.45, 1 } },
-	{ "white", "White", { 0.93, 0.93, 0.93, 1 } }
+	{ "white", "White", { 0.93, 0.93, 0.93, 1 } },
+	{ "custom", "Custom", { 0.9, 0.62, 0.62, 1 } }
 }
+
+-- Main panel colour. nil = the game's own menu reds; "custom" uses settings.themeCustom
+UI.THEMES = {
+	{ "toribash", "Toribash" },
+	{ "charcoal", "Charcoal", { 0.25, 0.25, 0.27 } },
+	{ "midnight", "Navy", { 0.14, 0.2, 0.38 } },
+	{ "purple", "Purple", { 0.34, 0.18, 0.46 } },
+	{ "forest", "Forest", { 0.15, 0.33, 0.21 } },
+	{ "custom", "Custom" }
+}
+
+---Square corners setting: every rounded shape asks here for its radius
+function UI.r(n)
+	if (MS.settings and MS.settings.squareCorners) then return 0 end
+	return n
+end
+
+---A { r, g, b } colour from settings, or the fallback when it's missing / broken
+local function rgbSetting(c, fallback)
+	if (type(c) ~= "table" or type(c[1]) ~= "number") then return fallback end
+	return { MS.clamp(c[1], 0, 1), MS.clamp(c[2] or 0, 0, 1), MS.clamp(c[3] or 0, 0, 1), 1 }
+end
 
 local function shadeOf(c, f, a)
 	return { math.min(1, c[1] * f), math.min(1, c[2] * f), math.min(1, c[3] * f), a or c[4] or 1 }
@@ -53,16 +76,32 @@ function UI.applyTheme()
 	local darker = TB_MENU_DEFAULT_DARKER_COLOR or { 0.607, 0.109, 0.109, 1 }
 	local darkest = TB_MENU_DEFAULT_DARKEST_COLOR or { 0.55, 0.05, 0.05, 1 }
 	local lighter = TB_MENU_DEFAULT_LIGHTER_COLOR or { 0.8, 0.25, 0.25, 1 }
+	local base
+	for _, t in ipairs(UI.THEMES) do
+		if (t[1] == st.theme) then base = t[3] end
+	end
+	if (st.theme == "custom") then base = rgbSetting(st.themeCustom, { 0.4, 0.4, 0.45, 1 }) end
+	if (base) then
+		-- Same steps between shades as the game's reds
+		bg = { base[1], base[2], base[3], 1 }
+		darker = shadeOf(base, 0.9)
+		darkest = shadeOf(base, 0.82)
+		lighter = { math.min(1, base[1] * 1.2 + 0.08), math.min(1, base[2] * 1.2 + 0.08), math.min(1, base[3] * 1.2 + 0.08), 1 }
+	end
 	local accent = UI.ACCENTS[1][3]
 	for _, a in ipairs(UI.ACCENTS) do
 		if (a[1] == st.accent) then accent = a[3] end
 	end
+	if (st.accent == "custom") then accent = rgbSetting(st.accentCustom, accent) end
 	C.bg = shadeOf(darker, 0.8)        -- panel body
 	C.dark = shadeOf(bg, 0.92)         -- buttons
 	C.darkest = shadeOf(darkest, 0.62) -- fields, section bars, panel edges, top bar
 	C.light = shadeOf(lighter, 1)      -- hover
 	C.lightest = { accent[1], accent[2], accent[3], 1 } -- active / selected
 	C.edge = shadeOf(darkest, 0.4)
+	-- See-through panels: only the panel body and its edge, so buttons stay readable
+	local op = MS.clamp(tonumber(st.panelOpacity) or 1, 0.3, 1)
+	C.bg[4], C.edge[4] = op, op
 end
 
 ---------------------------------------------------------------------------
@@ -139,7 +178,7 @@ local function button(parent, x, y, w, h, text, onClick, o)
 	o = o or {}
 	local b = parent:addChild({
 		pos = { x, y }, size = { w, h },
-		shapeType = ROUNDED, rounded = 2,
+		shapeType = ROUNDED, rounded = UI.r(2),
 		interactive = not o.disabled,
 		bgColor = o.active and C.lightest or (o.color or C.dark),
 		hoverColor = C.light, pressedColor = C.darkest,
@@ -242,7 +281,7 @@ end
 local function numRow(holder, y, w, e)
 	local lw = floor(w * 0.44)
 	local lab = holder:addChild({ pos = { 0, y }, size = { lw - 2, ROW }, interactive = true,
-		bgColor = C.clear, hoverColor = C.shade, pressedColor = C.shade, shapeType = ROUNDED, rounded = 3 })
+		bgColor = C.clear, hoverColor = C.shade, pressedColor = C.shade, shapeType = ROUNDED, rounded = UI.r(3) })
 	lab:addAdaptedText(false, e.label, 4, nil, 4, LEFTMID, 0.5)
 	scrub(lab, e.get, function(v) e.set(clampEntry(e, v)) end, e.step or 0.1, { int = e.int, min = e.min, max = e.max, tip = e.tip })
 	local function nudge(d)
@@ -267,7 +306,7 @@ local function vec3Row(holder, y, w, e)
 	for k = 1, 3 do
 		local x = lw + (k - 1) * cw
 		local let = holder:addChild({ pos = { x, y }, size = { 16, ROW }, interactive = true,
-			bgColor = C.axis[k], hoverColor = C.light, pressedColor = C.darkest, shapeType = ROUNDED, rounded = 3 })
+			bgColor = C.axis[k], hoverColor = C.light, pressedColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
 		let:addAdaptedText(false, letters[k], nil, nil, 4, CENTERMID, 0.45)
 		scrub(let, function() return e.get(k) end, function(v) e.set(k, v) end, e.step or 0.1, { tip = e.tip })
 		field(holder, x + 17, y, cw - 19, ROW, MS.fmt(e.get(k)), { numeric = true, live = function() return e.get(k) end }, function(s)
@@ -284,7 +323,7 @@ local function sliderRow(holder, y, w, e)
 	local s = TBMenu:spawnSlider2(sh, nil, e.get() or 0, {
 		minValue = e.min or 0, maxValue = e.max or 255, decimal = e.decimal or 0, darkerMode = true,
 		minValueDisp = e.minDisp, maxValueDisp = e.maxDisp
-	}, function(val) e.set(val) end, nil, nil, e.labelFn)
+	}, function(val) e.set(val) end, nil, e.onRelease, e.labelFn)
 	if (e.tip) then
 		sh:addMouseHandlers(nil, nil, function() UI.setTip(e.tip, sh) end)
 	end
@@ -320,7 +359,14 @@ local function choiceRow(holder, y, w, e)
 			UI.requestRefresh()
 		end, active = tostring(cur) == tostring(opt[1]), tip = e.tip })
 	end
-	buttonRow(holder, lw, y, w - lw, ROW, items)
+	-- Long lists wrap onto more rows (give the entry rows = ceil(#options / perRow))
+	local per = e.perRow or #items
+	for r = 0, math.ceil(#items / per) - 1 do
+		local row = {}
+		for i = r * per + 1, math.min(#items, (r + 1) * per) do table.insert(row, items[i]) end
+		while (#row < per and r > 0) do table.insert(row, { "", function() end, disabled = true }) end
+		buttonRow(holder, lw, y + r * (ROW + GAP), w - lw, ROW, row)
+	end
 end
 
 local function swatchesRow(holder, y, w, e)
@@ -331,7 +377,7 @@ local function swatchesRow(holder, y, w, e)
 		local col = (i - 1) % perRow
 		local s = holder:addChild({
 			pos = { col * (sw + GAP), y + r * (ROW + GAP) }, size = { sw, ROW },
-			interactive = true, shapeType = ROUNDED, rounded = 3,
+			interactive = true, shapeType = ROUNDED, rounded = UI.r(3),
 			bgColor = { c[1], c[2], c[3], 1 }, hoverColor = { math.min(1, c[1] + 0.15), math.min(1, c[2] + 0.15), math.min(1, c[3] + 0.15), 1 },
 			pressedColor = { c[1] * 0.7, c[2] * 0.7, c[3] * 0.7, 1 }
 		})
@@ -373,7 +419,7 @@ function UI.renderEntry(holder, y, e, w)
 			UI.setFolded(e.id, not folded)
 		end, { align = LEFTMID, color = C.darkest, scale = 0.5, tip = folded and "Click to open this section" or "Click to fold this section away" })
 	elseif (k == "header") then
-		local bar = holder:addChild({ pos = { 0, y + 3 }, size = { w, ROW - 4 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = 3 })
+		local bar = holder:addChild({ pos = { 0, y + 3 }, size = { w, ROW - 4 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
 		bar:addAdaptedText(false, e.label, 6, nil, UI.TITLE_FONT, LEFTMID, 0.5)
 	elseif (k == "hint") then
 		hint(holder, 0, y, w, (e.rows or 1) * (ROW + GAP) - GAP, e.label, e.scale or 0.45)
@@ -440,7 +486,7 @@ function UI.paged(parent, topY, height, entries, pageKey, render)
 		local th = holder.size.h
 		local track = holder:addChild({
 			pos = { fullW - SCROLL_W, 0 }, size = { SCROLL_W, th },
-			bgColor = C.darkest, shapeType = ROUNDED, rounded = 4, interactive = true
+			bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(4), interactive = true
 		})
 		local before = 0
 		for i = 1, first - 1 do before = before + heights[i] end
@@ -456,7 +502,7 @@ function UI.paged(parent, topY, height, entries, pageKey, render)
 		local thumb = track:addChild({
 			pos = { 1, thumbY }, size = { SCROLL_W - 2, thumbH },
 			bgColor = C.lightest, hoverColor = { 1, 1, 1, 1 }, pressedColor = C.light,
-			shapeType = ROUNDED, rounded = 3, interactive = true
+			shapeType = ROUNDED, rounded = UI.r(3), interactive = true
 		})
 		thumb:addMouseHandlers(function(_, _, my)
 			UI.startPointerDrag({ kind = "scroll", key = pageKey, max = maxFirst, y0 = my or MS.G.mouseY or 0, first0 = first, travel = math.max(1, travel) })
@@ -550,7 +596,7 @@ local function layoutGrip(parent, x, y, w, h, text, target, mode, rectFn, tip)
 	local g = parent:addChild({
 		pos = { x, y }, size = { w, h }, interactive = true,
 		bgColor = C.darkest, hoverColor = C.light, pressedColor = C.lightest,
-		shapeType = ROUNDED, rounded = 3
+		shapeType = ROUNDED, rounded = UI.r(3)
 	})
 	g:addAdaptedText(false, text, nil, nil, 4, CENTERMID, 0.45)
 	g:addMouseHandlers(function()
@@ -1109,6 +1155,14 @@ function UI.tabScene(pane)
 					MS.setNodesHidden({ it.key }, not hidden, true)
 				end, { active = hidden, tip = "Hide in the editor only (Ctrl+H). Hidden objects still export and play normally", scale = 0.42 })
 				button(holder, x, ry, rw - 56 - 44 - GAP * 2 - x, ROW, nameText, function()
+					local now = MS.clock()
+					local last = UI.lastRowClick
+					UI.lastRowClick = { key = it.key, t = now }
+					if (not UI.parentPick and not MS.shiftDown() and last and last.key == it.key and now - last.t < 0.4) then
+						UI.lastRowClick = nil
+						UI.renameNodes({ it.key })
+						return
+					end
 					if (UI.parentPick) then
 						UI.finishParentPick(it.idx)
 					elseif (MS.shiftDown()) then
@@ -1118,7 +1172,7 @@ function UI.tabScene(pane)
 					end
 				end, { active = selected, align = LEFTMID, scale = 0.45,
 					tip = UI.parentPick and "Click to make this the parent of the selection" or
-						"Click to select, Shift+click to add to the selection. Indented rows are children of the row above" })
+						"Click to select, Shift+click to add, double-click (or F2) to rename. Indented rows are children of the row above" })
 				button(holder, rw - 56, ry, 56, ROW, m.locked and "Locked" or "Lock", function()
 					local targets = it.tri and MS.tris[it.tri].objs or { it.idx }
 					for _, i in ipairs(targets) do
@@ -1144,7 +1198,10 @@ function UI.tabProperties(pane)
 	end
 	local n = MS.selCount()
 	local title = triId and (MS.tris[triId].name or ("Triangle " .. triId)) or (n > 1 and (n .. " objects") or MS.objName(MS.primary))
-	label(pane, PAD, y, w, ROW, title, LEFTMID, 0.55, UI.TITLE_FONT)
+	local rbw = math.min(70, floor(w * 0.25))
+	label(pane, PAD, y, w - rbw - GAP, ROW, title, LEFTMID, 0.55, UI.TITLE_FONT)
+	button(pane, PAD + w - rbw, y, rbw, ROW, "Rename", function() UI.renameNodes() end,
+		{ scale = 0.45, tip = "Give the selection a name (F2). Several at once become Name 1, Name 2..." })
 	y = y + ROW + GAP
 	local dist = MS.selectionDistance()
 	if (dist) then
@@ -2088,7 +2145,32 @@ function UI.tabSettings(pane)
 		return { kind = "num", label = lbl, step = step, min = o.min, max = o.max, int = o.int, tip = o.tip,
 			get = function() return st[key] end, set = function(v) st[key] = v end }
 	end
-	local entries = {
+	-- Look changes rebuild the whole UI, so sliders only do it when let go
+	local function rebuildLook()
+		MS.saveSettings()
+		UI.close()
+		UI.open()
+	end
+	---R / G / B sliders for a custom colour (nothing unless that colour is set to Custom)
+	local function rgb(name, key, shown)
+		if (not shown) then return false end
+		if (type(st[key]) ~= "table") then st[key] = { 0.4, 0.4, 0.45 } end
+		local c = st[key]
+		return { kind = "custom", rows = 3, render = function(holder, ry, rw)
+			for i, ch in ipairs({ "red", "green", "blue" }) do
+				sliderRow(holder, ry + (i - 1) * (ROW + GAP), rw, { label = name .. " " .. ch, min = 0, max = 255,
+					get = function() return floor((c[i] or 0) * 255 + 0.5) end,
+					set = function(v) c[i] = v / 255 end, onRelease = rebuildLook })
+			end
+		end }
+	end
+	local function viewChoice(lbl, key, tip)
+		return { kind = "choice", label = lbl, tip = tip, perRow = 4, rows = 2,
+			get = function() return st[key] end,
+			set = function(v) st[key] = v; MS.saveSettings() end,
+			options = (function() local o = {} for _, c in ipairs(MS.VIEW_COLORS or {}) do table.insert(o, { c[1], c[2] }) end return o end)() }
+	end
+	local list = {
 		{ kind = "header", label = "Snapping" },
 		tog("Snap while dragging (G)", "snap", "Hold Ctrl while dragging to temporarily flip this"),
 		num("Grid step", "gridStep", 0.05, { min = 0.01, tip = "Move snapping + arrow key nudge distance" }),
@@ -2111,15 +2193,39 @@ function UI.tabSettings(pane)
 			get = function() return st.uiScale or 1 end,
 			set = function(v) st.uiScale = v; MS.saveSettings(); UI.close(); UI.open() end,
 			options = { { 0.85, "Small" }, { 1, "Normal" }, { 1.15, "Large" }, { 1.3, "Huge" } } },
-		{ kind = "choice", label = "Accent", tip = "Color of selected tabs, buttons and switches",
+		{ kind = "choice", label = "Main colour", tip = "Colour of every panel, button and bar", perRow = 3, rows = 2,
+			get = function() return st.theme or "toribash" end,
+			set = function(v) st.theme = v; rebuildLook() end,
+			options = (function() local o = {} for _, t in ipairs(UI.THEMES) do table.insert(o, { t[1], t[2] }) end return o end)() },
+		rgb("Main", "themeCustom", st.theme == "custom"),
+		{ kind = "choice", label = "Accent", tip = "Color of selected tabs, buttons and switches", perRow = 4, rows = 2,
 			get = function() return st.accent or "pink" end,
-			set = function(v) st.accent = v; MS.saveSettings(); UI.close(); UI.open() end,
+			set = function(v) st.accent = v; rebuildLook() end,
 			options = (function() local o = {} for _, a in ipairs(UI.ACCENTS) do table.insert(o, { a[1], a[2] }) end return o end)() },
+		rgb("Accent", "accentCustom", st.accent == "custom"),
+		{ kind = "choice", label = "Corners", tip = "Rounded or square corners on panels and buttons",
+			get = function() return st.squareCorners and "square" or "round" end,
+			set = function(v) st.squareCorners = v == "square"; rebuildLook() end,
+			options = { { "round", "Rounded" }, { "square", "Square" } } },
+		{ kind = "slider", label = "Panel opacity", min = 30, max = 100, tip = "Lower it to see the 3D view through the panels",
+			get = function() return floor((tonumber(st.panelOpacity) or 1) * 100 + 0.5) end,
+			set = function(v) st.panelOpacity = v / 100 end, onRelease = rebuildLook },
 		{ kind = "buttons", items = { { "Unfold all sections", function() MS.settings.folded = {}; MS.saveSettings(); UI.requestRefresh() end } } },
 		{ kind = "header", label = "Panels" },
 		{ kind = "hint", rows = 2, label = "Drag the :: handle on a panel, the toolbar or the status bar to move it. Drag the / corner to resize a panel." },
 		{ kind = "buttons", items = { { "Reset panel layout", function() UI.resetLayout() end, tip = "Put every panel back where it started" } } },
 		{ kind = "slider", label = "Gizmo size", min = 50, max = 200, get = function() return st.gizmoSize end, set = function(v) st.gizmoSize = v end },
+		{ kind = "header", label = "3D view colours" },
+		viewChoice("Selected", "selColor", "Outline on selected objects"),
+		viewChoice("Main pick", "primaryColor", "Outline on the object the gizmo is on (the last one you clicked)"),
+		viewChoice("Hover", "hoverOutline", "Outline on the object under the mouse"),
+		viewChoice("Gizmo hover", "hoverColor", "Gizmo arrow / ring / handle under the mouse"),
+		{ kind = "slider", label = "Outline thickness", min = 5, max = 50, decimal = 0, tip = "How thick selection and hover outlines are",
+			get = function() return floor((tonumber(st.outlineWidth) or 1.5) * 10 + 0.5) end, set = function(v) st.outlineWidth = v / 10 end,
+			onRelease = function() MS.saveSettings() end, labelFn = function(v) return MS.fmt(v / 10) end },
+		{ kind = "slider", label = "Gizmo thickness", min = 50, max = 300, tip = "How thick the gizmo arrows and rings are",
+			get = function() return floor((tonumber(st.gizmoWidth) or 1) * 100 + 0.5) end, set = function(v) st.gizmoWidth = v / 100 end,
+			onRelease = function() MS.saveSettings() end, labelFn = function(v) return v .. "%" end },
 		{ kind = "header", label = "Saving" },
 		tog("Autosave while I work", "autosave", "Backup goes to the \"_autosave\" project. Recover it from the File tab"),
 		{ kind = "choice", label = "Autosave every", options = { { 1, "1 min" }, { 2, "2 min" }, { 5, "5 min" }, { 10, "10 min" } },
@@ -2167,6 +2273,10 @@ function UI.tabSettings(pane)
 		} },
 		{ kind = "hint", label = "Mod Studio " .. MS.VERSION }
 	}
+	local entries = {}
+	for _, e in ipairs(list) do
+		if (e) then table.insert(entries, e) end
+	end
 	UI.paged(pane, PAD, pane.size.h - PAD * 2, entries, "settings")
 end
 
@@ -2179,13 +2289,13 @@ local function usageBar(holder, y, w, labelText, used, limit, note)
 	local lw = floor(w * 0.36)
 	label(holder, 4, y, lw - 4, ROW, labelText, LEFTMID, 0.5)
 	local bw = w - lw
-	local bg = holder:addChild({ pos = { lw, y + 3 }, size = { bw, ROW - 6 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = 3 })
+	local bg = holder:addChild({ pos = { lw, y + 3 }, size = { bw, ROW - 6 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
 	local text
 	if (limit and limit > 0) then
 		local f = MS.clamp(used / limit, 0, 1)
 		local col = f < 0.7 and { 0.3, 0.75, 0.35, 1 } or (f < 0.9 and { 0.95, 0.65, 0.2, 1 } or { 0.9, 0.2, 0.2, 1 })
 		if (f > 0) then
-			bg:addChild({ pos = { 0, 0 }, size = { math.max(4, bw * f), ROW - 6 }, bgColor = col, shapeType = ROUNDED, rounded = 3 })
+			bg:addChild({ pos = { 0, 0 }, size = { math.max(4, bw * f), ROW - 6 }, bgColor = col, shapeType = ROUNDED, rounded = UI.r(3) })
 		end
 		text = used .. " / " .. limit .. "  (" .. floor(f * 100 + 0.5) .. "%)"
 	else
@@ -2427,14 +2537,13 @@ function UI.buildDock(side)
 	for _, d in ipairs(UI.DOCKS) do if (d.side == side) then def = d end end
 	local st = UI.dockState[side]
 	local x, y, w, h = dockRect(side)
-	local floating = MS.settings.layout and MS.settings.layout[side] and MS.settings.layout[side].w
 	local root = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
 		pos = { x, y }, size = { w, h },
-		bgColor = C.edge, shapeType = ROUNDED, rounded = floating and 5 or 0, interactive = true
+		bgColor = C.edge, shapeType = ROUNDED, rounded = UI.r(5), interactive = true
 	})
 	UI.dockEls[side] = root
-	local inner = root:addChild({ shift = { 1, 1 }, bgColor = C.bg, shapeType = ROUNDED, rounded = floating and 4 or 0 }, true)
+	local inner = root:addChild({ shift = { 1, 1 }, bgColor = C.bg, shapeType = ROUNDED, rounded = UI.r(4) }, true)
 
 	-- Tab row (always visible, even when the panel is tucked away)
 	local n = #def.tabs
@@ -2574,7 +2683,7 @@ function UI.buildToolbar()
 	local bar = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
 		pos = { tx, ty }, size = { W, h + 6 },
-		bgColor = C.darkest, shapeType = ROUNDED, rounded = L and 5 or 0, interactive = true
+		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(5), interactive = true
 	})
 	UI.toolbar = bar
 	layoutGrip(bar, 3, 3, 16, h, "::", "toolbar", "move", function() return { bar.pos.x, bar.pos.y, contentW, bar.size.h } end,
@@ -2660,7 +2769,7 @@ function UI.buildStatus()
 	local bar = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
 		pos = { L and MS.clamp(L.x, 0, WIN_W - W) or 0, L and MS.clamp(L.y, 0, WIN_H - SH) or WIN_H - SH }, size = { W, SH },
-		bgColor = L and { 0, 0, 0, 0.6 } or C.darkest, shapeType = ROUNDED, rounded = L and 5 or 0, interactive = true
+		bgColor = L and { 0, 0, 0, 0.6 } or C.darkest, shapeType = ROUNDED, rounded = UI.r(5), interactive = true
 	})
 	UI.status = bar
 	bar:addMouseHandlers(function()
@@ -2705,6 +2814,7 @@ UI.HELP = {
 	{ "L / G", "World or local gizmo / snapping on or off" },
 	{ "Ctrl (dragging)", "Temporarily flip snapping" },
 	{ "Ctrl+D / Del", "Duplicate / delete" },
+	{ "F2", "Rename the selection (or double-click it in Scene)" },
 	{ "Ctrl+C / Ctrl+V", "Copy / paste" },
 	{ "Ctrl+Z / Ctrl+Y", "Undo / redo (everything is undoable)" },
 	{ "Parenting", true },
@@ -2742,7 +2852,7 @@ function UI.toggleHelp(force)
 	local box = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
 		pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H },
-		bgColor = C.darkest, shapeType = ROUNDED, rounded = 8, interactive = true
+		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(8), interactive = true
 	})
 	UI.help = box
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
@@ -2750,7 +2860,7 @@ function UI.toggleHelp(force)
 	local y = 44
 	for _, row in ipairs(UI.HELP) do
 		if (row[2] == true) then
-			local bar = inner:addChild({ pos = { 10, y + 2 }, size = { W - 24, rowH - 2 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = 3 })
+			local bar = inner:addChild({ pos = { 10, y + 2 }, size = { W - 24, rowH - 2 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
 			bar:addAdaptedText(false, row[1], 6, nil, 4, LEFTMID, 0.48)
 		else
 			label(inner, 18, y, 150, rowH, row[1], LEFTMID, 0.47)
@@ -2776,7 +2886,7 @@ function UI.confirm(title, message, buttons)
 	})
 	UI.dialog = shade
 	local W, H = math.min(420, WIN_W - 40), 150
-	local box = shade:addChild({ pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H }, bgColor = C.darkest, shapeType = ROUNDED, rounded = 8 })
+	local box = shade:addChild({ pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(8) })
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
 	label(inner, 14, 8, W - 28, 28, title, LEFTMID, 0.65, UI.TITLE_FONT)
 	hint(inner, 14, 38, W - 28, 50, message, 0.5)
@@ -2788,6 +2898,58 @@ function UI.confirm(title, message, buttons)
 			if (b[2]) then b[2]() end
 		end, { active = i == 1 })
 	end
+end
+
+---Asks for a line of text. onOk(text) runs on OK / Enter.
+function UI.prompt(title, initial, onOk, okLabel)
+	if (UI.dialog) then UI.dialog:kill() end
+	UI.modalOpen = true
+	local shade = UIElement:new({
+		globalid = TB_MENU_HUB_GLOBALID,
+		pos = { 0, 0 }, size = { WIN_W, WIN_H },
+		bgColor = { 0, 0, 0, 0.45 }, interactive = true
+	})
+	UI.dialog = shade
+	local W, H = math.min(420, WIN_W - 40), 124
+	local box = shade:addChild({ pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(8) })
+	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
+	label(inner, 14, 8, W - 28, 28, title, LEFTMID, 0.65, UI.TITLE_FONT)
+	local f
+	local function ok()
+		local text = f and f.textfieldstr[1] or ""
+		UI.blurFields()
+		UI.closeDialog()
+		onOk(text)
+	end
+	f = field(inner, 14, 42, W - 32, 28, initial or "", { align = LEFTMID, enter = ok })
+	-- Start typing straight away, with the cursor at the end
+	pcall(function()
+		f.textfieldindex = string.len(f.textfieldstr[1])
+		f.keyboard = true
+		f:enableMenuKeyboard()
+	end)
+	local bw = (W - 28 - GAP) / 2
+	button(inner, 14, H - 40, bw, 28, okLabel or "OK", ok, { active = true })
+	button(inner, 14 + bw + GAP, H - 40, bw, 28, "Cancel", function()
+		UI.blurFields()
+		UI.closeDialog()
+	end)
+end
+
+---Rename box for the given node keys (default: the selection)
+function UI.renameNodes(keys)
+	if (not keys) then
+		local _, list = MS.selKeys()
+		keys = list
+	end
+	if (#keys == 0) then
+		MS.toast("Select something to rename first")
+		return
+	end
+	local title = #keys == 1 and "Rename" or ("Rename " .. #keys .. " items")
+	local initial = MS.nodeName(keys[1])
+	if (#keys > 1) then initial = initial:gsub("%s+%d+$", "") end
+	UI.prompt(title, initial, function(text) MS.renameNodes(keys, text) end, "Rename")
 end
 
 function UI.closeDialog()
@@ -2815,7 +2977,7 @@ function UI.enterTest()
 	local bar = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
 		pos = { floor(WIN_W / 2 - 150), 8 }, size = { 300, 34 },
-		bgColor = C.darkest, shapeType = ROUNDED, rounded = 6, interactive = true
+		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(6), interactive = true
 	})
 	UI.testBar = bar
 	label(bar, 10, 3, 140, 28, "Testing your mod", LEFTMID, 0.5)

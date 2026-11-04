@@ -505,7 +505,7 @@ function UI.tabTBM(pane)
 			local li = i
 			table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
 				local isHeader = line:match("^%s*[%a_]+%s+%d+") and not line:match("^%s*#")
-				local numEl = holder:addChild({ pos = { 0, ry }, size = { 34, ROW }, bgColor = isHeader and UI.C.light or UI.C.darkest, shapeType = ROUNDED, rounded = 3 })
+				local numEl = holder:addChild({ pos = { 0, ry }, size = { 34, ROW }, bgColor = isHeader and UI.C.light or UI.C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
 				numEl:addAdaptedText(false, tostring(li), nil, nil, 4, CENTERMID, 0.38)
 				UI.field(holder, 36, ry, rw - 36 - (ROW + GAP) * 2, ROW, T.lines[li], { align = LEFTMID }, function(s)
 					T.lines[li] = s
