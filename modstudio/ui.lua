@@ -117,9 +117,12 @@ end
 -- Widgets
 ---------------------------------------------------------------------------
 
-local function label(parent, x, y, w, h, str, align, scale)
+-- BadaBoom, the game's own heading font
+UI.TITLE_FONT = (FONTS and FONTS.BIG) or 0
+
+local function label(parent, x, y, w, h, str, align, scale, font)
 	local l = parent:addChild({ pos = { x, y }, size = { w, h } })
-	l:addAdaptedText(false, str, nil, nil, 4, align or LEFTMID, (scale or 0.5) * UI.textK)
+	l:addAdaptedText(false, str, nil, nil, font or 4, align or LEFTMID, (scale or 0.5) * UI.textK)
 	return l
 end
 UI.label = label
@@ -371,7 +374,7 @@ function UI.renderEntry(holder, y, e, w)
 		end, { align = LEFTMID, color = C.darkest, scale = 0.5, tip = folded and "Click to open this section" or "Click to fold this section away" })
 	elseif (k == "header") then
 		local bar = holder:addChild({ pos = { 0, y + 3 }, size = { w, ROW - 4 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = 3 })
-		bar:addAdaptedText(false, e.label, 6, nil, 4, LEFTMID, 0.5)
+		bar:addAdaptedText(false, e.label, 6, nil, UI.TITLE_FONT, LEFTMID, 0.5)
 	elseif (k == "hint") then
 		hint(holder, 0, y, w, (e.rows or 1) * (ROW + GAP) - GAP, e.label, e.scale or 0.45)
 	elseif (k == "num") then
@@ -1141,7 +1144,7 @@ function UI.tabProperties(pane)
 	end
 	local n = MS.selCount()
 	local title = triId and (MS.tris[triId].name or ("Triangle " .. triId)) or (n > 1 and (n .. " objects") or MS.objName(MS.primary))
-	label(pane, PAD, y, w, ROW, title, LEFTMID, 0.55)
+	label(pane, PAD, y, w, ROW, title, LEFTMID, 0.55, UI.TITLE_FONT)
 	y = y + ROW + GAP
 	local dist = MS.selectionDistance()
 	if (dist) then
@@ -2377,15 +2380,24 @@ local function dockRect(side)
 	if (L and L.w) then
 		local w = MS.clamp(L.w, 200, WIN_W - 4)
 		local x = MS.clamp(L.x, 0, WIN_W - w)
-		local y = MS.clamp(L.y, 0, WIN_H - UI.HEADER_H)
-		local h = open and MS.clamp(L.h, 120, WIN_H - y) or UI.HEADER_H
+		local y = MS.clamp(L.y, 0, bottom - UI.HEADER_H)
+		if (not open) then
+			if (side == "bottom") then
+				-- Tucked away: sit on the bottom edge of where the panel opens
+				y = MS.clamp(L.y + (L.h or UI.HEADER_H) - UI.HEADER_H, 0, bottom - UI.HEADER_H)
+			end
+			return x, y, w, UI.HEADER_H
+		end
+		-- Would run off the bottom of the screen: pop up instead
+		local h = MS.clamp(L.h or 120, 120, bottom)
+		y = math.max(0, math.min(L.y, bottom - h))
 		return x, y, w, h
 	end
 	-- Default: Scene and Properties stacked down the left edge, File / Rules /
 	-- Stats... in the bottom-right corner, the 3D view free in the middle
 	sideW = MS.clamp(floor(WIN_W * 0.1875), floor(250 * UI.k), floor(400 * UI.k))
 	local avail = bottom - top
-	local leftH = floor(avail * 0.44)
+	local leftH = floor(avail * 0.55)
 	if (side == "left") then
 		return 0, top, sideW, open and leftH or UI.HEADER_H
 	elseif (side == "right") then
@@ -2428,13 +2440,12 @@ function UI.buildDock(side)
 	local n = #def.tabs
 	local tw = (inner.size.w - 4 - (ROW + GAP) * 2 - GAP * (n - 1)) / n
 	local function fullRect()
-		local fx, fy, fw = dockRect(side)
-		local L = MS.settings.layout and MS.settings.layout[side]
+		-- Always the opened rect, so a tucked panel saves where it opens
 		local wasOpen = st.open
 		st.open = true
-		local _, _, _, fh = dockRect(side)
+		local fx, fy, fw, fh = dockRect(side)
 		st.open = wasOpen
-		return { fx, fy, fw, (L and L.h) or fh }
+		return { fx, fy, fw, fh }
 	end
 	layoutGrip(inner, inner.size.w - (ROW + GAP) * 2 - 2 + GAP, 2, ROW, ROW, "::", side, "move", fullRect,
 		"Drag to move this panel (Settings > Reset panel layout puts it back)")
@@ -2568,7 +2579,7 @@ function UI.buildToolbar()
 	UI.toolbar = bar
 	layoutGrip(bar, 3, 3, 16, h, "::", "toolbar", "move", function() return { bar.pos.x, bar.pos.y, contentW, bar.size.h } end,
 		"Drag to move the toolbar (Settings > Reset panel layout docks it again)")
-	if (not L) then label(bar, 3 + 16 + GAP * 2, 3, titleW, h, "MOD STUDIO", LEFTMID, 0.55) end
+	if (not L) then label(bar, 3 + 16 + GAP * 2, 3, titleW, h, "MOD STUDIO", LEFTMID, 0.55, UI.TITLE_FONT) end
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
@@ -2735,7 +2746,7 @@ function UI.toggleHelp(force)
 	})
 	UI.help = box
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
-	label(inner, 14, 8, W - 30, 30, MS.settings.firstRun and "Welcome to Mod Studio!" or "Mod Studio - shortcuts", LEFTMID, 0.75)
+	label(inner, 14, 8, W - 30, 30, MS.settings.firstRun and "Welcome to Mod Studio!" or "Mod Studio - shortcuts", LEFTMID, 0.75, UI.TITLE_FONT)
 	local y = 44
 	for _, row in ipairs(UI.HELP) do
 		if (row[2] == true) then
@@ -2767,7 +2778,7 @@ function UI.confirm(title, message, buttons)
 	local W, H = math.min(420, WIN_W - 40), 150
 	local box = shade:addChild({ pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H }, bgColor = C.darkest, shapeType = ROUNDED, rounded = 8 })
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
-	label(inner, 14, 8, W - 28, 28, title, LEFTMID, 0.65)
+	label(inner, 14, 8, W - 28, 28, title, LEFTMID, 0.65, UI.TITLE_FONT)
 	hint(inner, 14, 38, W - 28, 50, message, 0.5)
 	local n = #buttons
 	local bw = (W - 28 - GAP * (n - 1)) / n
