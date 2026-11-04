@@ -50,7 +50,10 @@ end
 function MS.tick()
 	MS.tickCamera()
 	MS.tickZoom()
-	if (not MS.testMode and not (MS.calib and not MS.calib.done)) then MS.tickRepair() end
+	if (not MS.testMode and not (MS.calib and not MS.calib.done)) then
+		MS.tickRepair()
+		MS.tickWorldMap()
+	end
 	MS.UI.tick()
 	local now = MS.clock()
 	MS.lastAutosave = MS.lastAutosave or now

@@ -2576,6 +2576,19 @@ function UI.buildToolbar()
 			x = x + 10
 		end
 	end
+	-- Docked bar: show tips / messages in the empty space after the buttons,
+	-- clear of the game's own icons in the bottom-left corner
+	UI.tipsInToolbar = false
+	local tipW = W - x - 16
+	if (not L and tipW > 160) then
+		UI.tipsInToolbar = true
+		local tipEl = bar:addChild({ pos = { x + 12, 3 }, size = { tipW, h } })
+		tipEl:addCustomDisplay(true, function(init)
+			if (init) then return end
+			local s, isToast = UI.statusText()
+			tipEl:uiText(s or "", nil, nil, 4, LEFTMID, 0.47 * UI.textK, nil, nil, isToast and { 1, 0.9, 0.45, 1 } or nil)
+		end)
+	end
 end
 
 ---------------------------------------------------------------------------
@@ -2642,7 +2655,8 @@ function UI.buildStatus()
 	end)
 	local textEl = bar:addChild({ pos = { 10, 0 }, size = { W - 190, SH } })
 	textEl:addCustomDisplay(true, function(init)
-		if (init) then return end
+		-- Tips live in the top bar when it's docked
+		if (init or UI.tipsInToolbar) then return end
 		local s, isToast = UI.statusText()
 		textEl:uiText(s or "", nil, nil, 4, LEFTMID, 0.47 * UI.textK, nil, nil, isToast and { 1, 0.9, 0.45, 1 } or nil)
 	end)

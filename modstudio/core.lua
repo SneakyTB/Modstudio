@@ -436,12 +436,125 @@ MS.tris = MS.tris or {}      -- triangle id -> triangle definition
 MS.nextTri = MS.nextTri or 1
 MS.numPlayers = MS.numPlayers or 2
 
-function MS.markDirty()
+---Fields the game can show instantly on its live object (no world rebuild needed)
+MS.LIVE_FIELDS = { pos_x = true, pos_y = true, pos_z = true, rot_x = true, rot_y = true, rot_z = true,
+	dims_x = true, dims_y = true, dims_z = true, color_r = true, color_g = true, color_b = true, color_a = true }
+MS.livePending = MS.livePending or {}
+-- True while every change since the last rebuild can be shown live
+if (MS.onlyLive == nil) then MS.onlyLive = true end
+
+---Marks the world as needing a rebuild. `liveIdx` = the change was only to a
+---live field of that object, so it can be shown right away (see MS.flush).
+function MS.markDirty(liveIdx)
 	MS.needRefresh = true
 	MS.changed = true
 	MS.changedSinceAutosave = true
 	MS.lastEditClock = clock()
+	if (liveIdx) then
+		MS.livePending[liveIdx] = true
+	else
+		MS.onlyLive = false
+	end
 end
+
+---------------------------------------------------------------------------
+-- Live object updates: the game keeps one live object per mod object. Moving
+-- that directly (set_obj_pos etc.) is instant, unlike a full world rebuild,
+-- so drags stay smooth; the proper rebuild runs once editing pauses.
+---------------------------------------------------------------------------
+
+MS.worldIdx = MS.worldIdx or {}
+MS.worldMapDirty = true
+
+local function worldPosMatches(i, o)
+	local ok, x, y, z = pcall(get_obj_pos, i)
+	return ok and type(x) == "number" and math.abs(x - (o.pos_x or 0)) < 1e-3
+		and math.abs(y - (o.pos_y or 0)) < 1e-3 and math.abs(z - (o.pos_z or 0)) < 1e-3
+end
+
+---Works out which game object shows which mod object, by position
+function MS.rebuildWorldMap()
+	MS.worldMapDirty = false
+	local list = MS.activeObjIndices()
+	local map = {}
+	-- Usually the n-th game object is the n-th mod object
+	local inOrder = true
+	for k, idx in ipairs(list) do
+		local o = MS.objs[idx]
+		if (o and worldPosMatches(k - 1, o)) then
+			map[idx] = k - 1
+		else
+			inOrder = false
+			break
+		end
+	end
+	if (not inOrder) then
+		-- Match by position + size. Objects that still look identical to another
+		-- (e.g. pasted in place) are left unmapped and just use normal rebuilds,
+		-- so a drag can never move the wrong object.
+		map = {}
+		local function sidesMatch(i, o)
+			local ok, a, b, c = pcall(get_obj_sides, i)
+			if (not ok or type(a) ~= "number") then return true end
+			local e = { o.dims_x or 0, o.dims_y or 0, o.dims_z or 0 }
+			if (o.type == 0) then return math.abs(a - e[1]) < 1e-3 end
+			if (o.type == 2) then return math.abs(a - e[1]) < 1e-3 and math.abs((b or 0) - e[2]) < 1e-3 end
+			return math.abs(a - e[1]) < 1e-3 and math.abs((b or 0) - e[2]) < 1e-3 and math.abs((c or 0) - e[3]) < 1e-3
+		end
+		local candidates, claimed = {}, {}
+		for _, idx in ipairs(list) do
+			local o = MS.objs[idx]
+			candidates[idx] = {}
+			if (o) then
+				for i = 0, #list + 8 do
+					if (worldPosMatches(i, o) and sidesMatch(i, o)) then
+						table.insert(candidates[idx], i)
+						claimed[i] = (claimed[i] or 0) + 1
+					end
+				end
+			end
+		end
+		for idx, cands in pairs(candidates) do
+			if (#cands == 1 and claimed[cands[1]] == 1) then map[idx] = cands[1] end
+		end
+	end
+	MS.worldIdx = map
+end
+
+---Called every frame: maps objects once a rebuild has settled (cache == world)
+function MS.tickWorldMap()
+	if (MS.worldMapDirty and not MS.needRefresh) then
+		pcall(MS.rebuildWorldMap)
+	end
+end
+
+---Pushes an object's cached position / rotation / size / color to its live game object
+local function liveObj(idx)
+	local w, o = MS.worldIdx[idx], MS.objs[idx]
+	if (not w or not o) then return false end
+	if (not pcall(set_obj_pos, w, o.pos_x or 0, o.pos_y or 0, o.pos_z or 0)) then return false end
+	local R = M.fromEuler(o.rot_x, o.rot_y, o.rot_z)
+	local t = { r0 = R[1][1], r1 = R[1][2], r2 = R[1][3], r3 = 0, r4 = R[2][1], r5 = R[2][2], r6 = R[2][3], r7 = 0,
+		r8 = R[3][1], r9 = R[3][2], r10 = R[3][3], r11 = 0, r12 = 0, r13 = 0, r14 = 0, r15 = 1 }
+	for n = 0, 15 do t[n + 1] = t["r" .. n] end
+	if (not pcall(set_obj_rot_m, w, t)) then
+		if (not pcall(set_obj_rot, w, toEngine("rot_x", o.rot_x or 0), toEngine("rot_y", o.rot_y or 0), toEngine("rot_z", o.rot_z or 0))) then
+			return false
+		end
+	end
+	local ok
+	if (o.type == 0) then
+		ok = pcall(set_obj_sides, w, o.dims_x or 0.5)
+	elseif (o.type == 2) then
+		ok = pcall(set_obj_sides, w, o.dims_x or 0.3, o.dims_y or 1)
+	else
+		ok = pcall(set_obj_sides, w, o.dims_x or 1, o.dims_y or 1, o.dims_z or 1)
+	end
+	if (not ok) then return false end
+	pcall(set_obj_color, w, o.color_r or 1, o.color_g or 1, o.color_b or 1, o.color_a or 1)
+	return true
+end
+MS.liveObj = liveObj
 
 ---How long a world rebuild takes (smoothed, seconds) - see MS.flush
 MS.refreshCost = MS.refreshCost or 0
@@ -461,8 +574,20 @@ end
 function MS.flush(force)
 	if (not MS.needRefresh) then return end
 	local now = clock()
-	if (not force and now - (MS.lastRefresh or 0) < MS.refreshInterval()) then
-		return
+	if (not force) then
+		-- Only moves / resizes / recolors so far: show them on the live objects now
+		-- and hold the full rebuild until editing pauses (keeps drags smooth)
+		if (MS.onlyLive and not MS.worldMapDirty) then
+			for idx in pairs(MS.livePending) do
+				if (not liveObj(idx)) then MS.liveFailed = true end
+			end
+			MS.livePending = {}
+			local busy = (MS.G and MS.G.drag) or now - (MS.lastEditClock or 0) < 0.4
+			if (busy and not MS.liveFailed) then return end
+		end
+		if (now - (MS.lastRefresh or 0) < MS.refreshInterval()) then
+			return
+		end
 	end
 	MS.needRefresh = false
 	pcall(refresh_mod_maker_world)
@@ -471,6 +596,9 @@ function MS.flush(force)
 	-- Smooth so one slow frame doesn't throttle everything
 	MS.refreshCost = (MS.refreshCost or 0) * 0.7 + took * 0.3
 	MS.lastRefresh = after
+	-- The rebuild may renumber the game's objects: map them again next frame
+	MS.livePending, MS.onlyLive, MS.liveFailed = {}, true, false
+	MS.worldMapDirty = true
 end
 
 function MS.readObj(idx)
@@ -620,7 +748,7 @@ function MS.objSet(idx, f, v)
 			t.props[f] = v
 		end
 	end
-	MS.markDirty()
+	MS.markDirty(MS.LIVE_FIELDS[f] and idx or nil)
 end
 
 function MS.ejSet(idx, f, v)
@@ -1506,6 +1634,7 @@ function MS.triBuild(id)
 	for _, idx in ipairs(t.objs) do
 		if (MS.sel[idx]) then wasSelected = true end
 	end
+	local created = false
 	while (#t.objs < want) do
 		local ok, idx = pcall(create_mod_envobj)
 		if (not ok or idx == nil) then
@@ -1516,8 +1645,11 @@ function MS.triBuild(id)
 		MS.readObj(idx)
 		MS.meta[idx] = { tri = id }
 		table.insert(t.objs, idx)
+		created = true
 	end
 	local props = t.props
+	-- Slices that only moved / resized can be shown live (see MS.flush)
+	local nonLive, touched = false, {}
 	for k, idx in ipairs(t.objs) do
 		local s = slices[k]
 		if (s) then
@@ -1539,6 +1671,7 @@ function MS.triBuild(id)
 				if (v ~= nil and o[fname] ~= v and not MS.unsupported.env[fname]) then
 					o[fname] = normalize(fname, v)
 					pcall(set_mod_envobj, idx, fname, toEngine(fname, o[fname]))
+					if (MS.LIVE_FIELDS[fname]) then touched[idx] = true else nonLive = true end
 				end
 			end
 			MS.meta[idx] = MS.meta[idx] or {}
@@ -1546,7 +1679,11 @@ function MS.triBuild(id)
 			if (wasSelected) then MS.sel[idx] = true end
 		end
 	end
-	MS.markDirty()
+	if (nonLive or created) then
+		MS.markDirty()
+	else
+		for idx in pairs(touched) do MS.markDirty(idx) end
+	end
 end
 
 ---Creates a triangle from three world points. opts: thick, slices, smooth, props, name
