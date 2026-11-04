@@ -630,7 +630,7 @@ function MS.updateDrag(x, y)
 	local h = drag.handle
 	local op, readout
 	local snapD, snapInfo
-	if (h.type == "direct" and not h.vertical and not h.cameraPlane and drag.ctx and drag.ctx.kind == "env" and MS.surfaceSnapActive()) then
+	if (h.type == "direct" and not h.vertical and not h.cameraPlane and not drag.pushed and drag.ctx and drag.ctx.kind == "env" and MS.surfaceSnapActive()) then
 		snapD, snapInfo = MS.surfaceSnapDelta(drag, ro, rd)
 	end
 
@@ -659,7 +659,7 @@ function MS.updateDrag(x, y)
 			if (h.type == "plane") then
 				axes[h.k] = false
 				d = V.sub(d, V.mul(drag.normal, V.dot(d, drag.normal)))
-			elseif (h.type == "direct" and not h.vertical and not h.cameraPlane) then
+			elseif (h.type == "direct" and not h.vertical and not h.cameraPlane and not drag.pushed) then
 				axes[3] = false
 				d[3] = 0
 			end
@@ -1562,6 +1562,13 @@ function MS.dragPush(btn)
 		return 1
 	end
 	MS.translateSelection(V.mul(dir, sign * step))
+	-- From here on the object slides at its new distance from the camera: Stick
+	-- or the floor-level slide would put it straight back where it was
+	drag.pushed = true
+	if (drag.handle.type == "direct" or drag.handle.type == "free") then
+		local _, look = camVectors()
+		drag.normal = V.norm(V.sub(camPos, look))
+	end
 	MS.rebaseAt(drag, G.mouseX or drag.x0, G.mouseY or drag.y0)
 	drag.readout = (sign > 0 and "Pushed away: " or "Pulled closer: ") .. MS.fmt(dist + sign * step) .. " from camera"
 	drag.mx, drag.my = G.mouseX or drag.mx, G.mouseY or drag.my
@@ -1660,10 +1667,49 @@ function MS.tickZoom()
 	if (drag and G.dragCam and G.mouseX) then
 		local camPos, look = camVectors()
 		if (V.dist(camPos, G.dragCam[1]) > 1e-4 or V.dist(look, G.dragCam[2]) > 1e-4) then
+			MS.carryWithCamera(drag, G.dragCam, { camPos, look })
 			G.dragCam = { V.copy(camPos), V.copy(look) }
 			MS.rebaseDrag()
 		end
 	end
+end
+
+local function camFrame(pos, look)
+	local fwd = V.norm(V.sub(look, pos))
+	local right = V.cross(fwd, { 0, 0, 1 })
+	right = V.len(right) < 1e-3 and { 1, 0, 0 } or V.norm(right)
+	return fwd, right, V.norm(V.cross(right, fwd))
+end
+
+---The game camera moved (WASD slides or swings it around): bring the held
+---object along so it keeps its place in view (kept to the handle's axis /
+---plane). Mod Studio's own zoom leaves it where it is.
+function MS.carryWithCamera(drag, old, new)
+	if (MS.camAnim or MS.camRequest or G.camHold or G.zoomProbe) then return end
+	local ctx = MS.gizmoContext()
+	if (not ctx or ctx.kind ~= "env") then return end
+	local f0, r0, u0 = camFrame(old[1], old[2])
+	local f1, r1, u1 = camFrame(new[1], new[2])
+	local rel = V.sub(ctx.pivot, old[1])
+	local lx, ly, lz = V.dot(rel, r0), V.dot(rel, u0), V.dot(rel, f0)
+	local p1 = V.add(new[1], V.add(V.mul(r1, lx), V.add(V.mul(u1, ly), V.mul(f1, lz))))
+	local h = drag.handle
+	local d = V.sub(p1, ctx.pivot)
+	if (h.type == "axis" and drag.axis) then
+		d = V.mul(drag.axis, V.dot(d, drag.axis))
+	elseif (h.type == "plane" or (h.type == "direct" and h.vertical)) then
+		d = V.sub(d, V.mul(drag.normal, V.dot(d, drag.normal)))
+	elseif (h.type == "direct" and not h.cameraPlane and not drag.pushed) then
+		d[3] = 0
+	elseif (h.type ~= "direct" and h.type ~= "free") then
+		return -- rotating / scaling
+	end
+	if (V.len(d) < 1e-6) then return end
+	if (not drag.started) then
+		drag.started = true
+		MS.pushUndo("Move")
+	end
+	MS.translateSelection(d)
 end
 
 ---The camera moved mid-drag (zoom, WASD, smooth camera). Don't touch the object:
@@ -1769,7 +1815,13 @@ end
 
 function MS.onMouseDown(btn, x, y)
 	if (not interactive()) then return end
-	if (MS.UI.isOverUI(x, y)) then
+	local wheel = btn == 4 or btn == 5
+	if (wheel) then
+		-- A wheel event's x / y is the scroll amount, not the cursor position
+		x, y = MOUSE_X or G.mouseX or x, MOUSE_Y or G.mouseY or y
+	end
+	-- Mid-drag the wheel always belongs to the drag, even over a panel
+	if (not (wheel and G.drag) and MS.UI.isOverUI(x, y)) then
 		-- Wheel over a panel scrolls it instead of zooming the camera
 		if ((btn == 4 or btn == 5) and MS.UI.handleWheel and MS.UI.handleWheel(x, y, btn)) then return 1 end
 		return
@@ -1785,8 +1837,8 @@ function MS.onMouseDown(btn, x, y)
 	end
 	if (btn == 4 or btn == 5) then
 		if (G.drag) then
-			if (G.drag.handle.type == "direct" and not G.drag.handle.cameraPlane and not shiftDown()
-				and MS.settings.scrollPush ~= false) then
+			local moving = ({ direct = true, free = true, plane = true, axis = true })[G.drag.handle.type]
+			if (moving and not shiftDown() and MS.settings.scrollPush ~= false) then
 				return MS.dragPush(btn)
 			end
 			return MS.dragZoom(btn)

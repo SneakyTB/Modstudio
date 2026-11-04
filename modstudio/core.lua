@@ -155,7 +155,7 @@ MS.DEFAULT_SETTINGS = {
 	moveChildren = true,    -- moving a parent moves its children
 	showHierarchy = true,   -- parent lines for the selection
 	showAllHierarchy = false,
-	scrollPush = true,      -- wheel pushes a click-dragged object along the view line
+	scrollPush = true,      -- wheel pushes a click-dragged object along the view line (off: wheel zooms)
 	altDuplicate = true,    -- Alt + gizmo drag drags out a copy
 	layout = {},            -- moved / resized panels: side -> { x, y, w, h }
 	uiScale = 1,            -- 0.85 / 1 / 1.15 / 1.3
@@ -179,10 +179,14 @@ function MS.loadSettings()
 		end
 	end
 	-- Earlier builds could wrongly switch away from the camera hook at the zoom limit
-	if (MS.settings.camFix ~= 2) then
+	if ((tonumber(MS.settings.camFix) or 0) < 2) then
 		MS.settings.camMethod = "hook"
 		MS.settings.camMethodOk = true
-		MS.settings.camFix = 2
+	end
+	-- A test build briefly turned scroll push off: put it back on
+	if ((tonumber(MS.settings.camFix) or 0) < 4) then
+		MS.settings.scrollPush = true
+		MS.settings.camFix = 4
 	end
 end
 
