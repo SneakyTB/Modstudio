@@ -2854,7 +2854,7 @@ UI.HELP = {
 	{ "Editing", true },
 	{ "1 2 3 4 5", "Select, Move, Rotate, Scale, Measure tools" },
 	{ "Drag object", "It rests on what's under the cursor and lines up edges (Shift: off, Alt: up/down)" },
-	{ "Scroll (gizmo drag)", "Zoom in/out without letting go - the object stays put, keep dragging after" },
+	{ "WASD (dragging)", "Move the camera - the held object comes along" },
 	{ "Arrow keys", "Nudge by one grid step (PgUp/PgDn: up/down, Shift: finer)" },
 	{ "L / G", "World or local gizmo / snapping on or off" },
 	{ "Ctrl (dragging)", "Temporarily flip snapping" },
