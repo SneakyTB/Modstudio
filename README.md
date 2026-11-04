@@ -25,6 +25,7 @@ Press **H** in Mod Studio for every shortcut.
 | `modstudio/tools.lua` | Stick (surface snapping), measure, prefabs, curves, moving obstacles, templates, presets, player placement + dojo |
 | `modstudio/viewport.lua` | 3D gizmo, picking, dragging, camera, shortcuts |
 | `modstudio/ui.lua` | Panels, toolbar, status line, help, theme |
+| `modstudio/icons.lua` | Vector icons for the toolbar and icon buttons (drawn in code, no image files) |
 | `modstudio/extras.lua` | TBM editor, undo history, hide/isolate, copy/paste properties |
 
 Projects are saved to `data/script/modstudio/projects/` and settings to

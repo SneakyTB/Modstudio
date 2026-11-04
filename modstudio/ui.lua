@@ -173,18 +173,35 @@ local function hint(parent, x, y, w, h, str, scale)
 end
 UI.hint = hint
 
----Button. o: active, disabled, tip, color, scale, align
+---Button. o: active, disabled, tip, color, scale, align,
+---icon (name from icons.lua; with empty text the button is icon only, otherwise the icon sits left of the text),
+---iconDim (draw the icon faded, for an "off" state)
 local function button(parent, x, y, w, h, text, onClick, o)
 	o = o or {}
+	local bg = o.active and C.lightest or (o.color or C.dark)
 	local b = parent:addChild({
 		pos = { x, y }, size = { w, h },
 		shapeType = ROUNDED, rounded = UI.r(2),
 		interactive = not o.disabled,
-		bgColor = o.active and C.lightest or (o.color or C.dark),
+		bgColor = bg,
 		hoverColor = C.light, pressedColor = C.darkest,
 		inactiveColor = C.darkest
 	})
-	b:addAdaptedText(false, text, o.align == LEFTMID and 6 or nil, nil, 4, o.align or CENTERMID, (o.scale or 0.5) * UI.textK)
+	local hasText = text and text ~= ""
+	local icon = o.icon
+	if (icon and hasText) then
+		-- Icon + label only when both fit; otherwise the label wins (it says more)
+		local ok, tw = pcall(get_string_length, text, 4)
+		if (ok and tw and tw * (o.scale or 0.5) * UI.textK + h + 10 > w) then icon = nil end
+	end
+	if (icon) then
+		UI.addIcon(b, icon, { bg = bg, disabled = o.disabled, dim = o.iconDim, box = hasText and { 2, 0, h, h } or nil })
+	end
+	if (hasText) then
+		local shift = o.align == LEFTMID and 6 or nil
+		if (icon) then shift = h + 2 end
+		b:addAdaptedText(false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), (o.scale or 0.5) * UI.textK)
+	end
 	if (onClick and not o.disabled) then
 		b:addMouseHandlers(nil, function() onClick() end)
 	end
@@ -200,7 +217,7 @@ local function buttonRow(parent, x, y, w, h, items)
 	local n = #items
 	local bw = (w - GAP * (n - 1)) / n
 	for i, it in ipairs(items) do
-		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled })
+		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled, icon = it.icon })
 	end
 end
 
@@ -289,12 +306,12 @@ local function numRow(holder, y, w, e)
 		local v = clampEntry(e, (e.get() or 0) + d * (e.step or 0.1))
 		e.set(v)
 	end
-	button(holder, lw, y, ROW, ROW, "-", function() nudge(-1) end, { tip = "Decrease (Shift: x10)" })
+	button(holder, lw, y, ROW, ROW, "", function() nudge(-1) end, { icon = "minus", tip = "Decrease (Shift: x10)" })
 	field(holder, lw + ROW + GAP, y, w - lw - ROW * 2 - GAP * 2, ROW, MS.fmt(e.get()), { numeric = true, live = e.get }, function(s)
 		local v = tonumber(s)
 		if (v) then e.set(clampEntry(e, v)) end
 	end)
-	button(holder, w - ROW, y, ROW, ROW, "+", function() nudge(1) end, { tip = "Increase (Shift: x10)" })
+	button(holder, w - ROW, y, ROW, ROW, "", function() nudge(1) end, { icon = "plus", tip = "Increase (Shift: x10)" })
 end
 
 ---label | X [  ] Y [  ] Z [  ]   (drag the letters to scrub)
@@ -415,9 +432,9 @@ function UI.renderEntry(holder, y, e, w)
 	local k = e.kind
 	if (k == "fold") then
 		local folded = UI.isFolded(e.id)
-		button(holder, 0, y + 1, w, ROW - 1, (folded and "+   " or "-   ") .. e.label, function()
+		button(holder, 0, y + 1, w, ROW - 1, e.label, function()
 			UI.setFolded(e.id, not folded)
-		end, { align = LEFTMID, color = C.darkest, scale = 0.5, tip = folded and "Click to open this section" or "Click to fold this section away" })
+		end, { icon = folded and "chevright" or "chevdown", align = LEFTMID, color = C.darkest, scale = 0.5, tip = folded and "Click to open this section" or "Click to fold this section away" })
 	elseif (k == "header") then
 		local bar = holder:addChild({ pos = { 0, y + 3 }, size = { w, ROW - 4 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
 		bar:addAdaptedText(false, e.label, 6, nil, UI.TITLE_FONT, LEFTMID, 0.5)
@@ -598,7 +615,9 @@ local function layoutGrip(parent, x, y, w, h, text, target, mode, rectFn, tip)
 		bgColor = C.darkest, hoverColor = C.light, pressedColor = C.lightest,
 		shapeType = ROUNDED, rounded = UI.r(3)
 	})
-	g:addAdaptedText(false, text, nil, nil, 4, CENTERMID, 0.45)
+	if (text == "::") then UI.addIcon(g, "grip", { bg = C.darkest, dim = true })
+	elseif (text == "/") then UI.addIcon(g, "resize", { bg = C.darkest, dim = true })
+	else g:addAdaptedText(false, text, nil, nil, 4, CENTERMID, 0.45) end
 	g:addMouseHandlers(function()
 		UI.startPointerDrag({ kind = "layout", target = target, mode = mode, rect0 = rectFn() })
 	end, nil, function() UI.setTip(tip, g) end)
@@ -779,9 +798,9 @@ local function objTransformEntries()
 		{ "Reset rotation", MS.resetRotation }
 	} })
 	table.insert(entries, { kind = "buttons", items = {
-		{ "Duplicate", MS.duplicateSelected, tip = "Ctrl+D" },
-		{ "Focus camera", MS.focusSelection, tip = "F" },
-		{ "Delete", MS.deleteSelected, tip = "Delete key" }
+		{ "Duplicate", MS.duplicateSelected, tip = "Ctrl+D", icon = "copy" },
+		{ "Focus camera", MS.focusSelection, tip = "F", icon = "focus" },
+		{ "Delete", MS.deleteSelected, tip = "Delete key", icon = "trash" }
 	} })
 	return entries
 end
@@ -841,9 +860,9 @@ local function triEntries(id)
 			{ "To plain boxes", function() MS.triDetach(id) end, tip = "Stop treating the slices as one triangle" }
 		} },
 		{ kind = "buttons", items = {
-			{ "Duplicate", MS.duplicateSelected },
-			{ "Focus camera", MS.focusSelection },
-			{ "Delete", MS.deleteSelected }
+			{ "Duplicate", MS.duplicateSelected, icon = "copy" },
+			{ "Focus camera", MS.focusSelection, icon = "focus" },
+			{ "Delete", MS.deleteSelected, icon = "trash" }
 		} }
 	}
 end
@@ -986,7 +1005,7 @@ local function objInfoEntries()
 				end
 				MS.selClear()
 				MS.toast("Locked - it can't be clicked in 3D now. Unlock it from the list")
-			end, tip = "Locked objects ignore clicks in the 3D view so you can't move them by accident" }
+			end, tip = "Locked objects ignore clicks in the 3D view so you can't move them by accident", icon = "lock" }
 		} },
 		{ kind = "header", label = "Parent & children" },
 		{ kind = "hint", rows = 2, label = MS.hierSummary() },
@@ -1088,16 +1107,16 @@ function UI.tabScene(pane)
 	local w = pane.size.w - PAD * 2
 	local y = PAD
 	buttonRow(pane, PAD, y, w, ROW, {
-		{ "Box", function() MS.addPrimitive("box") end, tip = "Add a box where the camera is looking" },
-		{ "Sphere", function() MS.addPrimitive("sphere") end },
-		{ "Cylinder", function() MS.addPrimitive("cylinder") end }
+		{ "Box", function() MS.addPrimitive("box") end, tip = "Add a box where the camera is looking", icon = "box" },
+		{ "Sphere", function() MS.addPrimitive("sphere") end, icon = "sphere" },
+		{ "Cylinder", function() MS.addPrimitive("cylinder") end, icon = "cylinder" }
 	})
 	y = y + ROW + GAP
 	buttonRow(pane, PAD, y, w, ROW, {
 		{ "Triangle", function() MS.addTriangle("fin") end, tip = "Add a triangle - drag its corner dots to reshape it" },
 		{ "Ramp", function() MS.addTriangle("ramp") end, tip = "Add a wedge-shaped ramp" },
-		{ "Duplicate", MS.duplicateSelected, tip = "Ctrl+D", disabled = MS.selCount() == 0 },
-		{ "Delete", MS.deleteSelected, tip = "Delete key", disabled = MS.selCount() == 0 }
+		{ "Duplicate", MS.duplicateSelected, tip = "Ctrl+D", disabled = MS.selCount() == 0, icon = "copy" },
+		{ "Delete", MS.deleteSelected, tip = "Delete key", disabled = MS.selCount() == 0, icon = "trash" }
 	})
 	y = y + ROW + GAP
 	local none = MS.selCount() == 0
@@ -1139,22 +1158,24 @@ function UI.tabScene(pane)
 				local x = indent
 				if (it.kids > 0) then
 					local folded = it.uid and UI.collapsed[it.uid]
-					button(holder, x, ry, 18, ROW, folded and "+" or "-", function()
+					button(holder, x, ry, 18, ROW, "", function()
 						local uid = MS.ensureUid(it.key)
 						UI.collapsed[uid] = not UI.collapsed[uid] or nil
 						UI.requestRefresh()
-					end, { tip = (folded and "Show " or "Hide ") .. "the " .. it.kids .. " child" .. (it.kids == 1 and "" or "ren"), scale = 0.5 })
+					end, { icon = folded and "chevright" or "chevdown", tip = (folded and "Show " or "Hide ") .. "the " .. it.kids .. " child" .. (it.kids == 1 and "" or "ren") })
 				end
 				x = x + 18 + GAP
 				local nameText = "[" .. it.tag .. "] " .. it.name
 				if (it.kids > 0) then nameText = nameText .. "  (" .. it.kids .. ")" end
 				if (filtering and it.parentName) then nameText = nameText .. "  < " .. it.parentName end
 				local hidden = MS.isHidden and MS.isHidden(it.idx)
-				if (hidden) then nameText = nameText .. "  (hidden)" end
-				button(holder, rw - 56 - 44 - GAP, ry, 44, ROW, hidden and "Show" or "Hide", function()
+				-- Plain icon toggles on the right: eye (hide) then padlock (lock)
+				local iconW = ROW
+				button(holder, rw - iconW * 2 - GAP, ry, iconW, ROW, "", function()
 					MS.setNodesHidden({ it.key }, not hidden, true)
-				end, { active = hidden, tip = "Hide in the editor only (Ctrl+H). Hidden objects still export and play normally", scale = 0.42 })
-				button(holder, x, ry, rw - 56 - 44 - GAP * 2 - x, ROW, nameText, function()
+				end, { icon = hidden and "eyeoff" or "eye", iconDim = not hidden, active = hidden,
+					tip = (hidden and "Hidden - click to show it again. " or "Hide in the editor only (Ctrl+H). ") .. "Hidden objects still export and play normally" })
+				button(holder, x, ry, rw - iconW * 2 - GAP * 2 - x, ROW, nameText, function()
 					local now = MS.clock()
 					local last = UI.lastRowClick
 					UI.lastRowClick = { key = it.key, t = now }
@@ -1173,14 +1194,15 @@ function UI.tabScene(pane)
 				end, { active = selected, align = LEFTMID, scale = 0.45,
 					tip = UI.parentPick and "Click to make this the parent of the selection" or
 						"Click to select, Shift+click to add, double-click (or F2) to rename. Indented rows are children of the row above" })
-				button(holder, rw - 56, ry, 56, ROW, m.locked and "Locked" or "Lock", function()
+				button(holder, rw - iconW, ry, iconW, ROW, "", function()
 					local targets = it.tri and MS.tris[it.tri].objs or { it.idx }
 					for _, i in ipairs(targets) do
 						MS.meta[i] = MS.meta[i] or {}
 						MS.meta[i].locked = not m.locked or nil
 					end
 					UI.requestRefresh()
-				end, { active = m.locked, tip = "Locked objects can't be clicked in the 3D view", scale = 0.42 })
+				end, { icon = m.locked and "lock" or "unlock", iconDim = not m.locked, active = m.locked,
+					tip = m.locked and "Locked - can't be clicked in the 3D view. Click to unlock" or "Lock it so it can't be clicked in the 3D view" })
 			end })
 		end
 		UI.paged(pane, y, listH, entries, "outliner")
@@ -1243,8 +1265,8 @@ function UI.tabCreate(pane)
 	local entries = {
 		{ kind = "header", label = "Shapes (appear where the camera looks)" },
 		{ kind = "buttons", items = {
-			{ "Box", function() MS.addPrimitive("box") end }, { "Sphere", function() MS.addPrimitive("sphere") end },
-			{ "Cylinder", function() MS.addPrimitive("cylinder") end }, { "Ball", function() MS.addPrimitive("ball") end, tip = "A bouncy physics ball" }
+			{ "Box", function() MS.addPrimitive("box") end, icon = "box" }, { "Sphere", function() MS.addPrimitive("sphere") end, icon = "sphere" },
+			{ "Cylinder", function() MS.addPrimitive("cylinder") end, icon = "cylinder" }, { "Ball", function() MS.addPrimitive("ball") end, tip = "A bouncy physics ball", icon = "sphere" }
 		} },
 		{ kind = "buttons", items = {
 			{ "Floor", function() MS.addPrimitive("floor") end }, { "Wall", function() MS.addPrimitive("wall") end },
@@ -2439,16 +2461,16 @@ function UI.tabLibrary(pane)
 	local entries = { { kind = "header", label = "Built-in" } }
 	local function row(name, builtin)
 		table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
-			local delW = builtin and 0 or 56
+			local delW = builtin and 0 or ROW
 			button(holder, 0, ry, rw - delW - (builtin and 0 or GAP), ROW, "Place  " .. name, function()
 				MS.placePrefab(name)
 			end, { align = LEFTMID, scale = 0.45, tip = "Adds it where the camera is looking" })
 			if (not builtin) then
-				button(holder, rw - delW, ry, delW, ROW, "Delete", function()
+				button(holder, rw - delW, ry, delW, ROW, "", function()
 					UI.confirm("Delete prefab?", "Removes \"" .. name .. "\" from your library. Objects already placed stay.", {
 						{ "Delete", function() MS.deletePrefabFile(name); UI.requestRefresh() end }, { "Cancel" }
 					})
-				end, { scale = 0.42 })
+				end, { icon = "trash", tip = "Delete this prefab from your library" })
 			end
 		end })
 	end
@@ -2616,10 +2638,10 @@ function UI.buildDock(side)
 		end, { active = st.open and st.active == id, scale = 0.46,
 			tip = (st.open and st.active == id) and "Click again to tuck this panel away" or nil })
 	end
-	button(inner, inner.size.w - ROW - 2, 2, ROW, ROW, st.open and "-" or "+", function()
+	button(inner, inner.size.w - ROW - 2, 2, ROW, ROW, "", function()
 		st.open = not st.open
 		UI.rebuildAfterToggle(side)
-	end, { tip = st.open and "Tuck this panel away" or "Open this panel" })
+	end, { icon = st.open and "chevup" or "chevdown", tip = st.open and "Tuck this panel away" or "Open this panel" })
 
 	if (not st.open) then return end
 	local content = inner:addChild({ pos = { 0, UI.HEADER_H }, size = { inner.size.w, inner.size.h - UI.HEADER_H }, bgColor = C.bg })
@@ -2690,37 +2712,39 @@ function UI.buildToolbar()
 	if (UI.toolbar) then UI.toolbar:kill() end
 	if (not MS.active) then return end
 	local st = MS.settings
+	-- { icon, onClick, active, tip }. Icon only: the name and shortcut are in the tip
 	local items = {
-		{ "Select", function() UI.setTool("select") end, st.tool == "select", "1 - Click objects. Shift+click adds, Shift+drag box-selects" },
-		{ "Move", function() UI.setTool("move") end, st.tool == "move", "2 - Arrows: one axis. Squares: a plane. Center dot: free" },
-		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "3 - Drag a colored ring" },
-		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "4 - Drag a handle to stretch, center to resize evenly" },
-		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "5 - Click two points to see the distance between them" },
+		{ "select", function() UI.setTool("select") end, st.tool == "select", "Select (1): click objects. Shift+click adds, Shift+drag box-selects" },
+		{ "move", function() UI.setTool("move") end, st.tool == "move", "Move (2): arrows move on one axis, squares on a plane, the center dot freely" },
+		{ "rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "Rotate (3): drag a colored ring" },
+		{ "scale", function() UI.setTool("scale") end, st.tool == "scale", "Scale (4): drag a handle to stretch, the center to resize evenly" },
+		{ "measure", function() UI.setTool("measure") end, st.tool == "measure", "Measure (5): click two points to see the distance between them" },
 		false,
-		{ st.space == "world" and "World" or "Local", UI.toggleSpace, false, "L - Gizmo aligned to the world or to the object" },
-		{ st.snap and "Snap on" or "Snap off", UI.toggleSnap, st.snap, "G - Snap to the grid (Ctrl flips it while dragging)" },
-		{ st.surfaceSnap and "Stick on" or "Stick off", function()
+		{ st.space == "world" and "world" or "local", UI.toggleSpace, false,
+			(st.space == "world" and "World axes" or "Local axes") .. " (L): gizmo aligned to the " .. (st.space == "world" and "world. Click for the object's own rotation" or "object. Click for the world axes") },
+		{ "snap", UI.toggleSnap, st.snap, "Grid snap " .. (st.snap and "on" or "off") .. " (G). Ctrl flips it while dragging" },
+		{ "stick", function()
 			st.surfaceSnap = not st.surfaceSnap
 			MS.saveSettings()
 			UI.buildToolbar()
 			MS.toast(st.surfaceSnap and "Dragged objects rest on other objects and line up with their edges (Shift flips it)" or "Dragged objects slide at their own height (Shift flips it)")
-		end, st.surfaceSnap, "Dragged objects sit on whatever is under the cursor and line up edges. Hold Shift while dragging to flip" },
+		end, st.surfaceSnap, "Stick to surfaces " .. (st.surfaceSnap and "on" or "off") .. ": dragged objects sit on whatever is under the cursor and line up edges. Shift flips it while dragging" },
 		false,
-		{ "Undo", MS.undo, false, "Ctrl+Z" },
-		{ "Redo", MS.redo, false, "Ctrl+Y" },
-		{ "Focus", MS.focusSelection, false, "F - Point the camera at the selection" },
-		{ "Test", function() UI.enterTest() end, false, "Play the mod, then come back to editing" },
-		{ "Help", function() UI.toggleHelp() end, false, "H - Shortcuts and tips" },
+		{ "undo", MS.undo, false, "Undo (Ctrl+Z)" },
+		{ "redo", MS.redo, false, "Redo (Ctrl+Y)" },
+		{ "focus", MS.focusSelection, false, "Focus (F): point the camera at the selection" },
+		{ "play", function() UI.enterTest() end, false, "Test: play the mod, then come back to editing" },
+		{ "help", function() UI.toggleHelp() end, false, "Help (H): shortcuts and tips" },
 		false,
-		{ "Close", function() MS.close() end, false, "Close Mod Studio" }
+		{ "close", function() MS.close() end, false, "Close Mod Studio" }
 	}
 	local n, seps = 0, 0
 	for _, it in ipairs(items) do if (it) then n = n + 1 else seps = seps + 1 end end
 	local h = ROW + 4
 	local L = MS.settings.layout and MS.settings.layout.toolbar
 	local titleW = L and 0 or floor(96 * UI.k)
-	local bw = math.min(floor(62 * UI.k), floor((WIN_W - 60 - titleW - seps * 10) / n))
-	local contentW = n * (bw + GAP) + seps * 10 + 6 + 16 + GAP
+	local bw = h + 4
+	local contentW = 3 + 16 + GAP + titleW + n * (bw + GAP) + seps * 10 + 3
 	-- Docked: a full-width top bar. Moved by the user: a compact floating bar.
 	local W = L and contentW or WIN_W
 	local tx = L and MS.clamp(L.x, 0, WIN_W - W) or 0
@@ -2737,7 +2761,7 @@ function UI.buildToolbar()
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
-			button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = 0.46 })
+			button(bar, x, 3, bw, h, "", it[2], { icon = it[1], active = it[3], tip = it[4] })
 			x = x + bw + GAP
 		else
 			x = x + 10

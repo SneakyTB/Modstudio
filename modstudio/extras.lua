@@ -511,17 +511,17 @@ function UI.tabTBM(pane)
 					T.lines[li] = s
 					T.dirty = true
 				end)
-				UI.button(holder, rw - ROW * 2 - GAP, ry, ROW, ROW, "+", function()
+				UI.button(holder, rw - ROW * 2 - GAP, ry, ROW, ROW, "", function()
 					table.insert(T.lines, li + 1, "")
 					T.dirty = true
 					UI.requestRefresh()
-				end, { tip = "Add an empty line below this one" })
-				UI.button(holder, rw - ROW, ry, ROW, ROW, "x", function()
+				end, { icon = "plus", tip = "Add an empty line below this one" })
+				UI.button(holder, rw - ROW, ry, ROW, ROW, "", function()
 					table.remove(T.lines, li)
 					if (#T.lines == 0) then T.lines = { "" } end
 					T.dirty = true
 					UI.requestRefresh()
-				end, { tip = "Delete this line" })
+				end, { icon = "trash", tip = "Delete this line" })
 			end })
 		end
 	end

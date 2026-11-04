@@ -23,6 +23,7 @@ dofile("modstudio/core.lua")
 dofile("modstudio/hierarchy.lua")
 dofile("modstudio/tools.lua")
 dofile("modstudio/viewport.lua")
+dofile("modstudio/icons.lua")
 dofile("modstudio/ui.lua")
 dofile("modstudio/extras.lua")
 
