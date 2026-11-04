@@ -22,6 +22,7 @@ Press **H** in Mod Studio for every shortcut.
 | `modstudio.lua` | Entry point: starts Mod Studio and hooks it into the game |
 | `modstudio/core.lua` | Object cache, selection, undo, triangles, tools, rules, files |
 | `modstudio/hierarchy.lua` | Parent / child hierarchy |
+| `modstudio/tools.lua` | Stick (surface snapping), measure, prefabs, curves, moving obstacles, templates, presets, player placement + dojo |
 | `modstudio/viewport.lua` | 3D gizmo, picking, dragging, camera, shortcuts |
 | `modstudio/ui.lua` | Panels, toolbar, status line, help, theme |
 | `modstudio/extras.lua` | TBM editor, undo history, hide/isolate, copy/paste properties |

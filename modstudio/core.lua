@@ -140,6 +140,7 @@ MS.DEFAULT_SETTINGS = {
 	gizmoSize = 95,
 	newStatic = true,
 	autosave = true,
+	autosaveMinutes = 1,    -- how often autosave runs (when something changed)
 	rotConvention = 1,      -- 1: Rz*Ry*Rx (Toribash default), 2: transposed
 	rotUnit = "deg",        -- units of rot_* in the engine API ("deg" / "rad"), measured by MS.calibrate
 	sizeScale = 1,          -- engine dims per unit of full size, measured by MS.calibrate
@@ -147,6 +148,8 @@ MS.DEFAULT_SETTINGS = {
 	camMethodOk = true,     -- true once camMethod is known to move the camera (hook confirmed in game)
 	camFix = 0,             -- settings migration marker for the camera method
 	objLimit = 0,           -- max env objects the game allows (0 = not measured yet)
+	surfaceSnap = true,     -- dragged objects rest on the surface under the cursor
+	showDojo = true,        -- draw the dojo outline on the floor
 	symmetry = false,       -- mirror body/joint edits to the other side
 	bodyGizmo = true,
 	moveChildren = true,    -- moving a parent moves its children
@@ -437,14 +440,37 @@ function MS.markDirty()
 	MS.needRefresh = true
 	MS.changed = true
 	MS.changedSinceAutosave = true
+	MS.lastEditClock = clock()
 end
 
----Rebuilds the mod maker world if anything changed. Cheap to call often.
-function MS.flush()
-	if (MS.needRefresh) then
-		MS.needRefresh = false
-		pcall(refresh_mod_maker_world)
+---How long a world rebuild takes (smoothed, seconds) - see MS.flush
+MS.refreshCost = MS.refreshCost or 0
+MS.lastRefresh = MS.lastRefresh or 0
+
+---Gap to leave between world rebuilds while editing. Cheap rebuilds aren't
+---held back at all; slow ones (big mods) run at most ~every 3x their cost.
+function MS.refreshInterval()
+	local cost = MS.refreshCost or 0
+	if (cost < 0.004) then return 0 end
+	return MS.clamp(cost * 3, 0.016, 0.25)
+end
+
+---Rebuilds the mod maker world if anything changed. The game rebuilds every
+---object and player each time, which is what made editing laggy, so repeated
+---changes (scrubbing, typing, dragging) are batched unless `force` is set.
+function MS.flush(force)
+	if (not MS.needRefresh) then return end
+	local now = clock()
+	if (not force and now - (MS.lastRefresh or 0) < MS.refreshInterval()) then
+		return
 	end
+	MS.needRefresh = false
+	pcall(refresh_mod_maker_world)
+	local after = clock()
+	local took = math.max(0, after - now)
+	-- Smooth so one slow frame doesn't throttle everything
+	MS.refreshCost = (MS.refreshCost or 0) * 0.7 + took * 0.3
+	MS.lastRefresh = after
 end
 
 function MS.readObj(idx)
@@ -857,14 +883,27 @@ function MS.snapshot()
 		bodies = MS.deepcopy(MS.bodies),
 		joints = MS.deepcopy(MS.joints),
 		rules = MS.readRules and MS.readRules() or nil,
-		autoGrip = MS.deepcopy(MS.autoGrip),
 		nextTri = MS.nextTri
 	}
 end
 
 ---Records the current state before a change. Calls with the same `key`
 ---within a short time are merged so typing a number is one undo step.
+---Runs `fn` as a single undo step: everything it changes undoes in one Ctrl+Z
+function MS.withUndo(label, fn)
+	MS.pushUndo(label)
+	local was = MS.undoSuppress
+	MS.undoSuppress = true
+	local ok, err = pcall(fn)
+	MS.undoSuppress = was
+	if (not ok) then
+		echo("Mod Studio error: " .. tostring(err))
+	end
+	return ok
+end
+
 function MS.pushUndo(label, key)
+	if (MS.undoSuppress) then return end
 	local now = clock()
 	if (key and MS.lastUndoKey == key and now - (MS.lastUndoTime or 0) < 1.5) then
 		MS.lastUndoTime = now
@@ -909,10 +948,22 @@ local function writeEJFields(idx, fields, skipSame)
 	end
 end
 
-function MS.restore(s)
+---True if the game still has every object in the cache
+local function engineHasAll()
+	local active = {}
+	for _, idx in ipairs(MS.activeObjIndices()) do active[idx] = true end
+	for idx in pairs(MS.objs) do
+		if (not active[idx]) then return false end
+	end
+	return true
+end
+
+---Restores a snapshot. With `forceRecreate` (or when the game has lost objects)
+---every object is rebuilt instead of only writing changed fields.
+function MS.restore(s, forceRecreate)
 	MS.endDragSilently()
 	local map = {}
-	local sameObjs = sameKeys(MS.objs, s.objs)
+	local sameObjs = not forceRecreate and sameKeys(MS.objs, s.objs) and engineHasAll()
 	if (sameObjs) then
 		for idx, fields in pairs(s.objs) do
 			writeObjFields(idx, fields, true)
@@ -997,11 +1048,66 @@ function MS.restore(s)
 	end
 
 	MS.applyRules(s.rules)
-	if (s.autoGrip) then MS.autoGrip = MS.deepcopy(s.autoGrip) end
 	if (MS.hierFix) then MS.hierFix() end
 
 	MS.markDirty()
 	MS.selClear()
+end
+
+---The game's mod maker can drop its objects on its own (seen when moving Tori's
+---head). If objects Mod Studio knows about are gone from the game, rebuild them
+---from the cache. Returns how many were missing.
+function MS.repairEngine()
+	local active = {}
+	for _, idx in ipairs(MS.activeObjIndices()) do active[idx] = true end
+	local missing = 0
+	for idx in pairs(MS.objs) do
+		if (not active[idx]) then missing = missing + 1 end
+	end
+	local ejMissing = 0
+	local activeEJ = {}
+	for _, idx in ipairs(MS.activeEJIndices()) do activeEJ[idx] = true end
+	for idx in pairs(MS.ejs) do
+		if (not activeEJ[idx]) then ejMissing = ejMissing + 1 end
+	end
+	if (missing == 0 and ejMissing == 0) then return 0 end
+	MS.restore(MS.snapshot(), true)
+	-- Whatever dropped the objects may have reloaded the players too: push ours back
+	MS.pushPlayersToEngine()
+	MS.flush(true)
+	echo("Mod Studio: the game dropped " .. missing .. " object" .. (missing == 1 and "" or "s") ..
+		(ejMissing > 0 and (" and " .. ejMissing .. " link" .. (ejMissing == 1 and "" or "s")) or "") ..
+		" from the mod maker - rebuilt them from Mod Studio's copy.")
+	MS.toast("Restored " .. missing .. " objects the game dropped")
+	return missing
+end
+
+---Writes every cached body part / joint field to the game
+function MS.pushPlayersToEngine()
+	for p, parts in pairs(MS.bodies) do
+		for b, fields in pairs(parts) do
+			for f, v in pairs(fields) do
+				if (not MS.unsupported.body[f]) then pcall(set_mod_body, p, b, f, toEngine(f, v)) end
+			end
+		end
+	end
+	for p, parts in pairs(MS.joints) do
+		for j, fields in pairs(parts) do
+			for f, v in pairs(fields) do
+				if (not MS.unsupported.joint[f]) then pcall(set_mod_joint, p, j, f, toEngine(f, v)) end
+			end
+		end
+	end
+	MS.needRefresh = true
+end
+
+---Called every frame; checks the game still has everything about once a second
+function MS.tickRepair()
+	local now = clock()
+	if (MS.G and MS.G.drag) then return end
+	if (MS.lastRepairCheck and now - MS.lastRepairCheck < 1) then return end
+	MS.lastRepairCheck = now
+	pcall(MS.repairEngine)
 end
 
 function MS.undo()
@@ -1047,6 +1153,7 @@ end
 
 ---Ground point the camera is looking at, snapped to the grid
 function MS.spawnPoint()
+	if (MS.spawnOverride) then return V.copy(MS.spawnOverride) end
 	local p = { 0, 0, 0 }
 	local ok, cam = pcall(get_camera_info)
 	if (ok and cam and cam.lookat) then
@@ -1961,6 +2068,55 @@ function MS.copyJointToOtherPlayers(p, j)
 	end
 end
 
+---------------------------------------------------------------------------
+-- 360 joints: limits past +-pi are ignored by the physics engine, so a joint
+-- with range 10 / -10 keeps turning either way (how the "360 chest" mods work)
+---------------------------------------------------------------------------
+
+MS.SPIN_LIMIT = 10
+MS.spinPrev = MS.spinPrev or {}
+
+function MS.jointSpins(p, j)
+	local o = MS.joints[p] and MS.joints[p][j]
+	if (not o) then return false end
+	return math.abs(o.histop or 0) > math.pi and math.abs(o.lostop or 0) > math.pi
+end
+
+---Turns 360 spinning on/off for one joint, remembering its old limits
+function MS.setJointSpin(p, j, on)
+	local o = MS.joints[p] and MS.joints[p][j]
+	if (not o) then return end
+	local key = p .. ":" .. j
+	if (on) then
+		if (not MS.jointSpins(p, j)) then
+			MS.spinPrev[key] = { o.histop, o.lostop }
+		end
+		MS.jointSet(p, j, "histop", MS.SPIN_LIMIT)
+		MS.jointSet(p, j, "lostop", -MS.SPIN_LIMIT)
+	else
+		local prev = MS.spinPrev[key]
+		MS.jointSet(p, j, "histop", prev and prev[1] or 1)
+		MS.jointSet(p, j, "lostop", prev and prev[2] or -1)
+		MS.spinPrev[key] = nil
+	end
+end
+
+---Spin preset for a list of joints on every player. Returns how many joints changed
+function MS.spinJoints(list, on)
+	local n = 0
+	for p = 0, math.max(1, MS.numPlayers) - 1 do
+		for _, j in ipairs(list) do
+			if (MS.joints[p] and MS.joints[p][j] and MS.jointSpins(p, j) ~= on) then
+				MS.setJointSpin(p, j, on)
+				n = n + 1
+			end
+		end
+	end
+	return n
+end
+
+MS.CHEST_JOINT, MS.LUMBAR_JOINT = 1, 2
+
 ---Scales a whole player around the point between its feet (sizes, positions, joint radii)
 function MS.scalePlayer(p, k)
 	if (not MS.bodies[p] or k <= 0) then return end
@@ -2024,7 +2180,8 @@ MS.RULES = {
 	{ name = "winpoint", title = "Win points", kind = "int", tip = "Score needed to win instantly (0 = off)" },
 	{ name = "drawwinner", title = "Winner on draw", kind = "enum", options = { { 0, "Default" }, { 1, "Tori" }, { 2, "Uke" } } },
 	{ name = "maxcontacts", title = "Max contacts", kind = "int" },
-	{ name = "momentumdecay", title = "Momentum decay", kind = "int", tip = "Single player only. 100 = classic, 0 = off" },
+	{ name = "momentumdecay", title = "Momentum decay", kind = "percent", min = 0, max = 100, minDisp = "Off", maxDisp = "100%", default = 100,
+		tip = "How much of the classic spin and flip slowdown is kept. 100% is normal Toribash, Off removes it (single player only)" },
 	{ name = "ghostcustom", title = "Custom ghosts", kind = "bool" },
 	{ name = "ghostlength", title = "Ghost length", kind = "int" },
 	{ name = "ghostspeed", title = "Ghost speed", kind = "int" }
@@ -2129,7 +2286,7 @@ function MS.setRule(name, value)
 end
 
 function MS.restartMatch()
-	MS.flush()
+	MS.flush(true)
 	local ok, ws = pcall(get_world_state)
 	if (ok and ws and ws.game_type == 1 and runCmd) then
 		runCmd("reset")
@@ -2228,7 +2385,7 @@ end
 
 function MS.exportMod(name)
 	name = MS.safeName(name)
-	MS.flush()
+	MS.flush(true)
 	local ok, written = pcall(export_mod_maker, name)
 	if (ok and written) then
 		MS.saveName = (tostring(written):gsub("^modmaker/", ""):gsub("%.tbm$", ""))
@@ -2237,12 +2394,6 @@ function MS.exportMod(name)
 		MS.saveProject(MS.saveName, true)
 		MS.toast("Exported data/mod/" .. tostring(written) .. " - load it from the Mods menu")
 		echo("Mod Studio: exported " .. tostring(written))
-		if (MS.autoGripActive()) then
-			local script = MS.exportAutoGripScript(MS.saveName)
-			if (script) then
-				echo("Mod Studio: auto-grip needs a script - wrote data/script/" .. script .. " (players run it with /ls " .. script .. ")")
-			end
-		end
 		return written
 	end
 	MS.toast("Export failed - see the debug console for details")
@@ -2324,7 +2475,7 @@ local function finishCalibration(result)
 		-- Re-read everything in the right units and rebuild triangles with them
 		MS.reloadAll()
 		for id in pairs(MS.tris) do MS.triBuild(id) end
-		MS.flush()
+		MS.flush(true)
 		echo("Mod Studio: matched the engine (rotation in " .. (result.rotUnit == "rad" and "radians" or "degrees") ..
 			", size scale " .. MS.fmt(MS.settings.sizeScale) .. ") - rotations and triangles now line up")
 	end
@@ -2420,12 +2571,14 @@ function MS.resetTo(what)
 	local okm, msg = pcall(get_mod_message)
 	local oku, um = pcall(get_mod_use_model)
 	local okn, mn = pcall(get_mod_model_name)
+	-- Inside MS.withUndo the caller already recorded the undo step
+	local pushed = not MS.undoSuppress
 	MS.pushUndo(label)
 	MS.endDragSilently()
 	local ok, res = pcall(import_mod_into_maker, MS.DEFAULT_MOD)
 	if (not ok or not res) then
 		-- The import may have half-run: re-read the engine, then put everything back
-		table.remove(MS.undoStack)
+		if (pushed) then table.remove(MS.undoStack) end
 		MS.reloadAll()
 		MS.restore(keep)
 		MS.toast("Couldn't load the default mod (" .. MS.DEFAULT_MOD .. ") - nothing was changed")
@@ -2433,9 +2586,7 @@ function MS.resetTo(what)
 	end
 	MS.meta, MS.tris = {}, {}
 	MS.reloadAll()
-	if (what == "all") then
-		MS.autoGrip = { [0] = "off", [1] = "off" }
-	else
+	if (what ~= "all") then
 		-- Put back everything that isn't being reset
 		local s = MS.deepcopy(keep)
 		if (what == "players") then
@@ -2455,76 +2606,6 @@ function MS.resetTo(what)
 	MS.selClear()
 	MS.toast(label .. " done - Ctrl+Z undoes it")
 	return true
-end
-
----------------------------------------------------------------------------
--- Auto-grip: hands start in grab mode when a match begins.
--- .tbm files can't store this, so exports also write a small companion script.
----------------------------------------------------------------------------
-
-MS.autoGrip = MS.autoGrip or { [0] = "off", [1] = "off" }
-MS.HANDS = { right = 11, left = 12 }
-
-local function gripHands(mode)
-	if (mode == "both") then return { MS.HANDS.right, MS.HANDS.left } end
-	if (mode == "left") then return { MS.HANDS.left } end
-	if (mode == "right") then return { MS.HANDS.right } end
-	return {}
-end
-
-function MS.autoGripActive()
-	for _, mode in pairs(MS.autoGrip) do
-		if (mode ~= "off") then return true end
-	end
-	return false
-end
-
-function MS.applyAutoGrip()
-	for p, mode in pairs(MS.autoGrip) do
-		for _, hand in ipairs(gripHands(mode)) do
-			pcall(set_grip_info, p, hand, 1)
-		end
-	end
-end
-
----Writes data/script/autogrip_<name>.lua. Returns the file name or nil.
-function MS.exportAutoGripScript(name)
-	name = MS.safeName(name)
-	local id = name:lower():gsub("[^%w]", "_")
-	local file = "autogrip_" .. id .. ".lua"
-	local lines = {}
-	for p = 0, 3 do
-		local hands = gripHands(MS.autoGrip[p] or "off")
-		if (#hands > 0) then
-			table.insert(lines, "\t[" .. p .. "] = { " .. table.concat(hands, ", ") .. " },")
-		end
-	end
-	local src = table.concat({
-		"-- Auto-grip for the mod \"" .. name .. "\" (made with Mod Studio)",
-		"-- Run it with /ls " .. file .. " - hands start in grab mode every match of this mod.",
-		"local MOD = " .. string.format("%q", name:lower() .. ".tbm"),
-		"-- player index = { hand ids }  (11 = right hand, 12 = left hand)",
-		"local GRIPS = {",
-		table.concat(lines, "\n"),
-		"}",
-		"local function apply()",
-		"\tlocal mod = tostring(get_gamerule(\"mod\") or \"\"):lower()",
-		"\tif (not mod:find(MOD, 1, true)) then return end",
-		"\tfor player, hands in pairs(GRIPS) do",
-		"\t\tfor _, hand in ipairs(hands) do",
-		"\t\t\tpcall(set_grip_info, player, hand, 1)",
-		"\t\tend",
-		"\tend",
-		"end",
-		"add_hook(\"new_game\", " .. string.format("%q", "autogrip_" .. id) .. ", apply)",
-		"apply()",
-		"echo(\"Auto-grip ready for \" .. MOD)",
-		""
-	}, "\n")
-	if (MS.writeFile(file, src)) then
-		return file
-	end
-	return nil
 end
 
 function MS.clearAll()

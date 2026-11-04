@@ -1,4 +1,5 @@
 # Personal data created while using Mod Studio
 modstudio/projects/*.msp
+modstudio/prefabs/*.msf
 modstudio/settings.cfg
 *.zip

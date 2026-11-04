@@ -103,6 +103,11 @@ local function tabOpen(id)
 end
 MS.tabOpen = tabOpen
 
+---Bodies tab is open on its Place sub-tab (whole-player gizmo + dojo handle)
+local function placingPlayers()
+	return tabOpen("players") and MS.UI.sub ~= nil and MS.UI.sub.players == "place"
+end
+
 local function rotFromTB(r)
 	if (type(r) ~= "table") then return nil end
 	local function g(n) return r["r" .. n] or r[n + 1] end
@@ -260,6 +265,14 @@ end
 ---Returns the current gizmo context or nil
 function MS.gizmoContext()
 	local localSpace = MS.settings.space == "local"
+	if (placingPlayers() and MS.bodySel and MS.bodies[MS.bodySel.p]) then
+		-- Whole player: move / turn where they stand
+		local p = MS.bodySel.p
+		local c = MS.playerWorldCenter(p)
+		if (c) then
+			return { kind = "player", p = p, pivot = c, A = M.identity(), W = MS.playerFrame(p), rot = true, scale = false }
+		end
+	end
 	if (tabOpen("players") and MS.settings.bodyGizmo and MS.bodySel) then
 		local o = MS.bodies[MS.bodySel.p] and MS.bodies[MS.bodySel.p][MS.bodySel.b]
 		if (o) then
@@ -301,7 +314,19 @@ end
 ---Snapshot of the things a drag will change
 local function captureItems(ctx)
 	local items = {}
-	if (ctx.kind == "body") then
+	if (ctx.kind == "player") then
+		local p = ctx.p
+		local it = { p = p, bodies = {}, joints = {}, center = MS.playerModCenter(p) or { 0, 0, 0 } }
+		for b = 0, MS.NUM_BODIES - 1 do
+			local o = MS.bodies[p][b]
+			if (o) then it.bodies[b] = { pos = { o.pos_x, o.pos_y, o.pos_z }, R = shapeMatrix(o) } end
+		end
+		for j = 0, MS.NUM_JOINTS - 1 do
+			local o = MS.joints[p] and MS.joints[p][j]
+			if (o) then it.joints[j] = { pos = { o.pos_x, o.pos_y, o.pos_z }, axis = { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 } } end
+		end
+		items.player = it
+	elseif (ctx.kind == "body") then
 		local o = MS.bodies[ctx.p][ctx.b]
 		items.body = { p = ctx.p, b = ctx.b, pos = { o.pos_x, o.pos_y, o.pos_z }, R = shapeMatrix(o),
 			type = o.type, dims = { o.sides_x or 0, o.sides_y or 0, o.sides_z or 0 } }
@@ -382,7 +407,7 @@ local function applyOp(drag, op)
 
 	-- Body/joint gizmos work in world space; convert into the player's mod coordinates
 	local W = drag.ctx and drag.ctx.W
-	if ((items.body or items.joint) and W) then
+	if ((items.body or items.joint or items.player) and W) then
 		local Wt = M.transpose(W)
 		local o2 = {}
 		for k, v in pairs(op) do o2[k] = v end
@@ -392,6 +417,35 @@ local function applyOp(drag, op)
 		op = o2
 	end
 
+	if (items.player) then
+		-- Every part and joint moves / turns together around the player's center
+		local it = items.player
+		local p = it.p
+		local Q = op.rot or M.identity()
+		local mv = op.move or { 0, 0, 0 }
+		local function tp(pos) return V.add(V.add(it.center, M.apply(Q, V.sub(pos, it.center))), mv) end
+		for b, s in pairs(it.bodies) do
+			local np = tp(s.pos)
+			MS.bodySet(p, b, "pos_x", np[1])
+			MS.bodySet(p, b, "pos_y", np[2])
+			MS.bodySet(p, b, "pos_z", np[3])
+			local x, y, z = M.toEuler(M.mul(Q, s.R))
+			MS.bodySet(p, b, "rot_x", x)
+			MS.bodySet(p, b, "rot_y", y)
+			MS.bodySet(p, b, "rot_z", z)
+		end
+		for j, s in pairs(it.joints) do
+			local np = tp(s.pos)
+			MS.jointSet(p, j, "pos_x", np[1])
+			MS.jointSet(p, j, "pos_y", np[2])
+			MS.jointSet(p, j, "pos_z", np[3])
+			local ax = M.apply(Q, s.axis)
+			MS.jointSet(p, j, "axis_x", ax[1])
+			MS.jointSet(p, j, "axis_y", ax[2])
+			MS.jointSet(p, j, "axis_z", ax[3])
+		end
+		return
+	end
 	if (items.body) then
 		local it = items.body
 		local p, b = it.p, it.b
@@ -575,6 +629,11 @@ function MS.updateDrag(x, y)
 	if (not ro) then return end
 	local h = drag.handle
 	local op, readout
+	local snapD, snapInfo
+	if (h.type == "direct" and not h.vertical and not h.cameraPlane and drag.ctx and drag.ctx.kind == "env" and MS.surfaceSnapActive()) then
+		snapD, snapInfo = MS.surfaceSnapDelta(drag, ro, rd)
+	end
+
 
 	if (h.type == "axis") then
 		local t = lineRayParam(drag.pivot0, drag.axis, ro, rd)
@@ -585,6 +644,10 @@ function MS.updateDrag(x, y)
 			op = { move = d }
 			readout = AXIS_NAMES[h.k] .. " " .. (V.dot(d, drag.axis) >= 0 and "+" or "") .. MS.fmt(V.dot(d, drag.axis))
 		end
+	elseif (snapD) then
+		-- Rest the selection on whatever surface is under the cursor
+		op = { move = snapD }
+		readout = snapInfo
 	elseif (h.type == "plane" or h.type == "free" or h.type == "direct") then
 		-- Rays that only skim the plane hit it miles away - ignore them instead of flinging the object
 		local grazing = abs(V.dot(rd, drag.normal)) < 0.06
@@ -886,6 +949,21 @@ function MS.buildFrame()
 		end
 	end
 
+	-- Measuring
+	local m = MS.measure
+	if (m and m.a) then
+		F.measure = { a = P(m.a), b = m.b and P(m.b) or nil, pa = m.a, pb = m.b }
+	end
+
+	-- Dojo resize handle while placing players
+	if (placingPlayers()) then
+		local r = MS.dojoShape()
+		if (r) then
+			local c = MS.dojoCenter()
+			F.dojoHandle = P({ c[1] + r, c[2], 0.02 })
+		end
+	end
+
 	-- Labels
 	if (MS.settings.showLabels) then
 		local n = 0
@@ -1071,6 +1149,36 @@ function MS.draw3d()
 			end
 		end
 	end
+	-- Dojo outline on the floor
+	local placing = placingPlayers()
+	if (MS.settings.showDojo or placing) then
+		local r, kind = MS.dojoShape()
+		if (r) then
+			local c = MS.dojoCenter()
+			local z = 0.012
+			set_color(1, 0.85, 0.3, placing and 0.9 or 0.45)
+			if (kind == 0) then
+				local x1, x2, y1, y2 = c[1] - r, c[1] + r, c[2] - r, c[2] + r
+				pcall(draw_line, x1, y1, z, x2, y1, z, 2)
+				pcall(draw_line, x2, y1, z, x2, y2, z, 2)
+				pcall(draw_line, x2, y2, z, x1, y2, z, 2)
+				pcall(draw_line, x1, y2, z, x1, y1, z, 2)
+			else
+				local seg = 64
+				for i = 0, seg - 1 do
+					local a1, a2 = i / seg * math.pi * 2, (i + 1) / seg * math.pi * 2
+					pcall(draw_line, c[1] + math.cos(a1) * r, c[2] + math.sin(a1) * r, z, c[1] + math.cos(a2) * r, c[2] + math.sin(a2) * r, z, 2)
+				end
+			end
+		end
+	end
+	-- Measuring line (depth tested so it sits in the world)
+	local m = MS.measure
+	if (m and m.a and m.b) then
+		set_color(0.35, 0.9, 1, 0.9)
+		pcall(draw_line, m.a[1], m.a[2], m.a[3] + 0.01, m.b[1], m.b[2], m.b[3] + 0.01, 3)
+	end
+
 	-- Translucent fill for selected / hovered triangles, both windings
 	local tris = MS.selSplit()
 	local function fill(t, a)
@@ -1253,6 +1361,39 @@ function MS.draw2d()
 			set_color(1, 1, 1, 0.9)
 			disk(c[1], c[2], 4)
 		end
+	end
+
+	-- Measuring points + distance label
+	local ms = F.measure
+	if (ms) then
+		for _, p in ipairs({ ms.a, ms.b }) do
+			if (p and p.ok) then
+				set_color(0, 0, 0, 0.7)
+				disk(p[1], p[2], 7)
+				set_color(0.35, 0.9, 1, 1)
+				disk(p[1], p[2], 5)
+			end
+		end
+		if (ms.b and ms.a.ok and ms.b.ok and ms.pb) then
+			local d = V.sub(ms.pb, ms.pa)
+			local s = MS.fmt(V.len(d)) .. "   (" .. MS.fmt(d[1]) .. ", " .. MS.fmt(d[2]) .. ", " .. MS.fmt(d[3]) .. ")"
+			local mx, my = (ms.a[1] + ms.b[1]) / 2, (ms.a[2] + ms.b[2]) / 2
+			local ok, w = pcall(get_string_length, s, 1)
+			w = ok and w or 120
+			set_color(0, 0, 0, 0.7)
+			pcall(draw_quad, mx - w / 2 - 6, my - 26, w + 12, 22)
+			text(s, mx - w / 2, my - 24, 0.6, 0.95, 1)
+		end
+	end
+
+	-- Dojo resize handle
+	local dh = F.dojoHandle
+	if (dh and dh.ok) then
+		set_color(0, 0, 0, 0.7)
+		disk(dh[1], dh[2], 9)
+		set_color(1, 0.85, 0.3, 1)
+		disk(dh[1], dh[2], 7)
+		text(G.dojoReadout or "Drag to resize the dojo", dh[1] + 12, dh[2] - 9, 1, 0.9, 0.5)
 	end
 
 	-- Box selection rectangle
@@ -1582,14 +1723,38 @@ function MS.focusSelection()
 	MS.cameraTo(ctx.pivot, nil, math.max(3, size * 1.8 + 1.5), nil, true)
 end
 
+---Tori's facing as the game draws him: forward and right along the floor.
+---Falls back to world axes if the body can't be read.
+function MS.toriAxes()
+	local r, l = MS.bodyWorld(0, 5), MS.bodyWorld(0, 8)
+	if (r and l) then
+		local right = { r.pos[1] - l.pos[1], r.pos[2] - l.pos[2], 0 }
+		if (V.len(right) > 1e-3) then
+			right = V.norm(right)
+			-- Facing +Y with the right side at +X gives forward = up x right
+			local fwd = V.norm(V.cross({ 0, 0, 1 }, right))
+			return fwd, right
+		end
+	end
+	return { 0, 1, 0 }, { 1, 0, 0 }
+end
+
+---Camera views relative to Tori: front = looking at his face, side = from his right
 function MS.viewFrom(which)
 	local ctx = MS.gizmoContext()
-	local target = ctx and ctx.pivot or { 0, 0, 1 }
+	local target = ctx and ctx.pivot
+	if (not target) then
+		local c = MS.playerWorldCenter and MS.playerWorldCenter(0)
+		target = c or { 0, 0, 1 }
+	end
+	local fwd, right = MS.toriAxes()
+	local up = { 0, 0, 1 }
 	local dirs = {
-		top = V.norm({ 0.001, -0.02, 1 }),
-		front = V.norm({ 0, -1, 0.15 }),
-		side = V.norm({ 1, 0, 0.15 }),
-		iso = V.norm({ 1, -1, 0.8 })
+		-- Straight down, nudged back so Tori faces the top of the screen
+		top = V.norm(V.add(up, V.mul(fwd, -0.02))),
+		front = V.norm(V.add(fwd, V.mul(up, 0.15))),
+		side = V.norm(V.add(right, V.mul(up, 0.15))),
+		iso = V.norm(V.add(V.add(fwd, right), V.mul(up, 0.8)))
 	}
 	MS.cameraTo(target, dirs[which] or dirs.iso, math.max(6, ((ctx and ctx.kind == "env") and targetSize() or 1) * 2 + 3), nil, true)
 end
@@ -1629,6 +1794,21 @@ function MS.onMouseDown(btn, x, y)
 		return
 	end
 	if (btn ~= 1) then return end
+
+	-- 0) Measure tool: click two points
+	if (MS.settings.tool == "measure") then
+		MS.measureClick(x, y)
+		return 1
+	end
+
+	-- 0b) Dojo resize handle (Bodies > Place)
+	local dh = MS.frame and MS.frame.dojoHandle
+	if (dh and dh.ok and (x - dh[1]) ^ 2 + (y - dh[2]) ^ 2 < 140) then
+		MS.pushUndo("Dojo size")
+		G.dojoDrag = true
+		pcall(disable_mouse_camera_movement)
+		return 1
+	end
 
 	-- 1) Gizmo handles
 	local h = MS.gizmoHit(x, y)
@@ -1717,6 +1897,25 @@ function MS.onMouseMove(x, y)
 	G.prevMouseX, G.prevMouseY = G.mouseX or x, G.mouseY or y
 	G.mouseX, G.mouseY = x, y
 	if (not interactive()) then return end
+	if (G.dojoDrag) then
+		local ro, rd = MS.mouseRay(x, y)
+		local hit = ro and rayPlane(ro, rd, { 0, 0, 0 }, { 0, 0, 1 })
+		if (hit) then
+			local c = MS.dojoCenter()
+			local _, kind = MS.dojoShape()
+			local r
+			if (kind == 0) then
+				-- Square: half-width is the bigger of the X/Y distances
+				r = math.max(abs(hit[1] - c[1]), abs(hit[2] - c[2]))
+			else
+				r = V.dist({ hit[1], hit[2], 0 }, c)
+			end
+			MS.setDojoFromRadius(math.max(0.25, r))
+			local _, _, size = MS.dojoShape()
+			G.dojoReadout = "Dojo size " .. tostring(size or 0)
+		end
+		return
+	end
 	if (G.drag) then
 		MS.updateDrag(x, y)
 		return
@@ -1756,6 +1955,13 @@ function MS.onMouseUp(btn, x, y)
 	if (not MS.active) then return end
 	if (btn == 1 and MS.UI.endPointerDrag and MS.UI.endPointerDrag()) then return end
 	if (btn ~= 1) then return end
+	if (G.dojoDrag) then
+		G.dojoDrag, G.dojoReadout = nil, nil
+		pcall(enable_mouse_camera_movement)
+		MS.toast("Dojo resized - press Restart match on the Rules tab to see the game's own dojo update")
+		MS.UI.requestRefresh()
+		return
+	end
 	if (G.drag) then
 		MS.endDrag()
 		return
@@ -1863,6 +2069,8 @@ function MS.onKeyDown(key)
 		MS.UI.setTool("rotate")
 	elseif (ch == "4") then
 		MS.UI.setTool("scale")
+	elseif (ch == "5") then
+		MS.UI.setTool("measure")
 	elseif (ch == "l") then
 		MS.UI.toggleSpace()
 	elseif (ch == "g") then

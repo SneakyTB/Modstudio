@@ -21,6 +21,7 @@ end
 
 dofile("modstudio/core.lua")
 dofile("modstudio/hierarchy.lua")
+dofile("modstudio/tools.lua")
 dofile("modstudio/viewport.lua")
 dofile("modstudio/ui.lua")
 dofile("modstudio/extras.lua")
@@ -49,10 +50,14 @@ end
 function MS.tick()
 	MS.tickCamera()
 	MS.tickZoom()
+	if (not MS.testMode and not (MS.calib and not MS.calib.done)) then MS.tickRepair() end
 	MS.UI.tick()
 	local now = MS.clock()
 	MS.lastAutosave = MS.lastAutosave or now
-	if (MS.settings.autosave and MS.changedSinceAutosave and now - MS.lastAutosave > 60 and not MS.G.drag) then
+	-- Wait for a pause in editing so the save never lands mid-scrub
+	local idle = now - (MS.lastEditClock or 0) > 2
+	local every = 60 * math.max(1, tonumber(MS.settings.autosaveMinutes) or 1)
+	if (MS.settings.autosave and MS.changedSinceAutosave and now - MS.lastAutosave > every and idle and not MS.G.drag) then
 		MS.lastAutosave = now
 		MS.saveProject("_autosave", true)
 	end
@@ -79,9 +84,6 @@ function MS.addHooks()
 	end)
 	add_hook("camera", H, function()
 		if (MS.active) then return MS.onCamera() end
-	end)
-	add_hook("new_game", H, function()
-		if (MS.active) then MS.applyAutoGrip() end
 	end)
 	add_hook("mouse_button_down", H, function(btn, x, y) return MS.onMouseDown(btn, x, y) end)
 	add_hook("mouse_button_up", H, function(btn, x, y) return MS.onMouseUp(btn, x, y) end)
@@ -127,7 +129,6 @@ function MS.start()
 	MS.undoStack, MS.redoStack = {}, {}
 	MS.tris, MS.meta, MS.sel = {}, {}, {}
 	MS.nextTri = 1
-	MS.autoGrip = { [0] = "off", [1] = "off" }
 	MS.changed = false
 	MS.changedSinceAutosave = false
 	MS.lastAutosave = MS.clock()

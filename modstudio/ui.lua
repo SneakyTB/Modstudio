@@ -279,8 +279,9 @@ local function sliderRow(holder, y, w, e)
 	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, 0.5)
 	local sh = holder:addChild({ pos = { lw, y }, size = { w - lw, ROW } })
 	local s = TBMenu:spawnSlider2(sh, nil, e.get() or 0, {
-		minValue = e.min or 0, maxValue = e.max or 255, decimal = e.decimal or 0, darkerMode = true
-	}, function(val) e.set(val) end)
+		minValue = e.min or 0, maxValue = e.max or 255, decimal = e.decimal or 0, darkerMode = true,
+		minValueDisp = e.minDisp, maxValueDisp = e.maxDisp
+	}, function(val) e.set(val) end, nil, nil, e.labelFn)
 	if (e.tip) then
 		sh:addMouseHandlers(nil, nil, function() UI.setTip(e.tip, sh) end)
 	end
@@ -1142,6 +1143,11 @@ function UI.tabProperties(pane)
 	local title = triId and (MS.tris[triId].name or ("Triangle " .. triId)) or (n > 1 and (n .. " objects") or MS.objName(MS.primary))
 	label(pane, PAD, y, w, ROW, title, LEFTMID, 0.55)
 	y = y + ROW + GAP
+	local dist = MS.selectionDistance()
+	if (dist) then
+		label(pane, PAD, y, w, ROW, "Distance between their centers: " .. MS.fmt(dist), LEFTMID, 0.45)
+		y = y + ROW + GAP
+	end
 	local function withProps(group, entries)
 		if (MS.copyProps) then
 			local name = group == "all" and "all properties" or group
@@ -1211,6 +1217,68 @@ function UI.tabCreate(pane)
 		gnum("Levels", "pyramidLevels", 1, { int = true, min = 1, max = 8 }),
 		gnum("Block size", "pyramidSize", 0.1, { min = 0.1 }),
 		{ kind = "buttons", items = { { "Build pyramid", MS.genPyramid } } },
+		{ kind = "header", label = "Curves (arches, curved ramps, tunnels)" },
+		{ kind = "num", label = "Radius", step = 0.25, min = 0.2, get = function() return MS.arcGen.radius end, set = function(v) MS.arcGen.radius = v end,
+			tip = "Inside radius of the curve" },
+		{ kind = "num", label = "Thickness", step = 0.05, min = 0.02, get = function() return MS.arcGen.thick end, set = function(v) MS.arcGen.thick = v end },
+		{ kind = "num", label = "Width / height", step = 0.25, min = 0.1, get = function() return MS.arcGen.width end, set = function(v) MS.arcGen.width = v end,
+			tip = "How wide the walkway is (or how tall a curved wall is)" },
+		{ kind = "num", label = "Pieces", step = 1, int = true, min = 2, max = 72, get = function() return MS.arcGen.segments end, set = function(v) MS.arcGen.segments = v end,
+			tip = "More pieces = smoother curve, but more objects" },
+		{ kind = "num", label = "Span (degrees)", step = 15, min = 15, max = 360, get = function() return MS.arcGen.span end, set = function(v) MS.arcGen.span = v end,
+			tip = "How far round the arch / curved wall goes" },
+		{ kind = "buttons", items = {
+			{ "Arch", function() MS.genArc("arch") end, tip = "Half-circle over a walkway" },
+			{ "Quarter pipe", function() MS.genArc("quarterpipe") end, tip = "Floor that curves up into a wall" },
+			{ "Tunnel", function() MS.genArc("tunnel") end, tip = "Full ring to walk through" }
+		} },
+		{ kind = "buttons", items = {
+			{ "Curved wall", function() MS.genArc("curvedwall") end, tip = "Wall bending around - good for round arenas" },
+			{ "Spiral stairs", function() MS.genArc("spiral") end, tip = "Steps winding round a pole" }
+		} },
+		{ kind = "num", label = "Spiral steps", step = 1, int = true, min = 2, max = 80, get = function() return MS.arcGen.spiralSteps end, set = function(v) MS.arcGen.spiralSteps = v end },
+		{ kind = "num", label = "Spiral turns", step = 0.25, min = 0.1, max = 6, get = function() return MS.arcGen.spiralTurns end, set = function(v) MS.arcGen.spiralTurns = v end },
+		{ kind = "num", label = "Step rise", step = 0.05, min = 0.05, get = function() return MS.arcGen.spiralRise end, set = function(v) MS.arcGen.spiralRise = v end },
+		{ kind = "header", label = "Moving obstacles (experimental)" },
+		{ kind = "num", label = "Size", step = 0.25, min = 0.2, max = 5, get = function() return MS.moverGen.size end, set = function(v) MS.moverGen.size = v end },
+		{ kind = "num", label = "Motor speed", step = 1, min = 0, max = 60, get = function() return MS.moverGen.speed end, set = function(v) MS.moverGen.speed = v end,
+			tip = "How fast spinners and turntables turn" },
+		{ kind = "num", label = "Motor strength", step = 100, min = 0, get = function() return MS.moverGen.strength end, set = function(v) MS.moverGen.strength = v end,
+			tip = "How hard they push - low strength gets stopped by players" },
+		{ kind = "buttons", items = (function()
+			local items = {}
+			for i = 1, 3 do
+				local m = MS.MOVERS[i]
+				table.insert(items, { m.name, function() MS.genMover(m.id) end, tip = m.tip })
+			end
+			return items
+		end)() },
+		{ kind = "buttons", items = (function()
+			local items = {}
+			for i = 4, #MS.MOVERS do
+				local m = MS.MOVERS[i]
+				table.insert(items, { m.name, function() MS.genMover(m.id) end, tip = m.tip })
+			end
+			return items
+		end)() },
+		{ kind = "hint", rows = 2, scale = 0.42, label = "Built from physics objects joined by links - press Test to watch them move. Fine-tune speed and limits on the Links tab." },
+		{ kind = "header", label = "Surface presets (for the selection)" },
+		{ kind = "buttons", items = (function()
+			local items = {}
+			for i, pr in ipairs(MS.SURFACE_PRESETS) do
+				table.insert(items, { pr.name, function() MS.applySurfacePreset(i) end, tip = pr.tip })
+			end
+			return items
+		end)() },
+		{ kind = "header", label = "Touch triggers (experimental)" },
+		{ kind = "buttons", items = (function()
+			local items = {}
+			for i, pr in ipairs(MS.TRIGGER_PRESETS) do
+				table.insert(items, { pr.name, function() MS.applyTriggerPreset(i) end, tip = pr.tip })
+			end
+			return items
+		end)() },
+		{ kind = "hint", rows = 2, scale = 0.42, label = "Triggers fire when a player touches the object. Players get put in trigger groups automatically. Check them with Test." },
 		{ kind = "header", label = "Selection tools" },
 		{ kind = "buttons", items = {
 			{ "Align X", function() MS.alignSelection(1) end, tip = "Line up the selection with the last-clicked object" },
@@ -1447,7 +1515,63 @@ function UI.tabPlayers(pane)
 	end
 	local function entriesFor(sub)
 	local entries
-	if (sub == "physics") then
+	if (sub == "place") then
+		local function rule(lbl, name, step, tip)
+			return { kind = "num", label = lbl, step = step, int = true, tip = tip,
+				get = function() return tonumber(MS.getRule(name)) or 0 end,
+				set = function(v) MS.pushUndo(lbl, "rule:" .. name); MS.setRule(name, floor(v)) end }
+		end
+		entries = {
+			{ kind = "toggle", label = "Gizmo moves the whole player", tip = "Turn on to move / turn the whole player and show the dojo resize dot",
+				get = function() return UI.sub.players == "place" end,
+				set = function(v) UI.sub.players = v and "place" or "transform"; UI.requestRefresh() end },
+			{ kind = "hint", rows = 2, scale = 0.44, label = "With that on, the gizmo moves/turns the whole " .. (PLAYER_NAMES[p] or "player") ..
+				". Pick the other player at the top. Drag the yellow dot to resize the dojo." },
+			{ kind = "buttons", items = {
+				{ "Face the other way", function()
+					MS.pushUndo("Turn player")
+					local Q = M.axisAngle({ 0, 0, 1 }, 180)
+					local c = MS.playerModCenter(p)
+					for b = 0, MS.NUM_BODIES - 1 do
+						local o = MS.bodies[p][b]
+						local np = V.add(c, M.apply(Q, V.sub({ o.pos_x, o.pos_y, o.pos_z }, c)))
+						MS.bodySet(p, b, "pos_x", np[1]); MS.bodySet(p, b, "pos_y", np[2]); MS.bodySet(p, b, "pos_z", np[3])
+						local x, yy, z = M.toEuler(M.mul(Q, M.fromEuler(o.rot_x, o.rot_y, o.rot_z)))
+						MS.bodySet(p, b, "rot_x", x); MS.bodySet(p, b, "rot_y", yy); MS.bodySet(p, b, "rot_z", z)
+					end
+					for j = 0, MS.NUM_JOINTS - 1 do
+						local o = MS.joints[p] and MS.joints[p][j]
+						if (o) then
+							local np = V.add(c, M.apply(Q, V.sub({ o.pos_x, o.pos_y, o.pos_z }, c)))
+							MS.jointSet(p, j, "pos_x", np[1]); MS.jointSet(p, j, "pos_y", np[2]); MS.jointSet(p, j, "pos_z", np[3])
+							local ax = M.apply(Q, { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 })
+							MS.jointSet(p, j, "axis_x", ax[1]); MS.jointSet(p, j, "axis_y", ax[2]); MS.jointSet(p, j, "axis_z", ax[3])
+						end
+					end
+					MS.toast("Turned " .. (PLAYER_NAMES[p] or "player") .. " around")
+				end },
+				{ "Reset this player", function() MS.resetTo(p); UI.requestRefresh() end }
+			} },
+			{ kind = "header", label = "Start spacing (applied when a match starts)" },
+			rule("Engage distance", "engagedistance", 5, "How far apart the players start"),
+			rule("Engage height", "engageheight", 5, "How high above the floor they start"),
+			rule("Engage rotation", "engagerotation", 15, "Degrees the players are turned at the start"),
+			{ kind = "buttons", items = { { "Restart match to see it", MS.restartMatch } } },
+			{ kind = "header", label = "Dojo" },
+			{ kind = "choice", label = "Shape", options = { { 0, "Square" }, { 1, "Round" } },
+				get = function() return tonumber(MS.getRule("dojotype")) or 0 end,
+				set = function(v)
+					MS.pushUndo("Dojo shape")
+					-- Keep the same footprint when switching shape
+					local r = MS.dojoShape()
+					MS.setRule("dojotype", v)
+					if (r) then MS.setDojoFromRadius(r) end
+				end },
+			rule("Dojo size", "dojosize", 25, "0 = no dojo. Square: full width. Round: radius (hundredths of a unit)"),
+			{ kind = "toggle", label = "Always show the dojo outline", get = function() return MS.settings.showDojo end,
+				set = function(v) MS.settings.showDojo = v; MS.saveSettings() end }
+		}
+	elseif (sub == "physics") then
 		entries = {
 			num("Density", "density", 0.05, { min = 0, tip = "Heavier parts hit harder but move slower" }),
 			num("Hardness", "hardness", 0.05, { min = 0 }),
@@ -1535,7 +1659,8 @@ function UI.tabPlayers(pane)
 		{ "players:physics", "Physics", function() return entriesFor("physics") end },
 		{ "players:thrust", "Thrust", function() return entriesFor("thrust") end },
 		{ "players:trigger", "Trigger", function() return entriesFor("trigger") end },
-		{ "players:tools", "Tools", function() return entriesFor("tools") end }
+		{ "players:tools", "Tools", function() return entriesFor("tools") end },
+		{ "players:place", "Place players + dojo", function() return entriesFor("place") end }
 	})
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "players")
 end
@@ -1595,6 +1720,31 @@ function UI.tabJoints(pane)
 					MS.toast("Copied limits, strength and physics to the other player(s)")
 				end }
 			} },
+			{ kind = "header", label = "360 presets (both players)" },
+			{ kind = "buttons", items = {
+				{ "360 chest", function()
+					MS.pushUndo("360 chest")
+					MS.spinJoints({ MS.CHEST_JOINT }, true)
+					MS.toast("Chest spins 360 for every player - turn it either way when playing")
+					UI.requestRefresh()
+				end, tip = "Like the classic 360 chest mods" },
+				{ "360 chest + lumbar", function()
+					MS.pushUndo("360 chest + lumbar")
+					MS.spinJoints({ MS.CHEST_JOINT, MS.LUMBAR_JOINT }, true)
+					MS.toast("Chest and lumbar spin 360 for every player")
+					UI.requestRefresh()
+				end, tip = "Blender style: the whole upper body can spin" }
+			} },
+			{ kind = "buttons", items = {
+				{ "Remove all 360 joints", function()
+					MS.pushUndo("Remove 360 joints")
+					local all = {}
+					for jj = 0, MS.NUM_JOINTS - 1 do table.insert(all, jj) end
+					local n = MS.spinJoints(all, false)
+					MS.toast(n > 0 and ("Put limits back on " .. n .. " joints") or "No joints were set to spin")
+					UI.requestRefresh()
+				end }
+			} },
 			{ kind = "header", label = "Change every joint at once" },
 			{ kind = "num", label = "Strength", step = 10, min = 0, get = function() return UI.allForce or MS.joints[p][j].maxforce end, set = function(v) UI.allForce = v end },
 			{ kind = "num", label = "Max speed", step = 1, min = 0, get = function() return UI.allVel or MS.joints[p][j].maxvelocity end, set = function(v) UI.allVel = v end },
@@ -1615,8 +1765,19 @@ function UI.tabJoints(pane)
 		entries = {
 			vec("Position", "pos", 0.05),
 			vec("Axis", "axis", 0.1, "Direction the joint bends around"),
-			num("Max angle", "histop", 0.05, { tip = "How far it bends one way (radians)" }),
-			num("Min angle", "lostop", 0.05, { tip = "How far it bends the other way (radians)" }),
+			{ kind = "toggle", label = "Spins 360 (no limits)", tip = "Keeps turning in either direction, like the 360 chest mods",
+				get = function() return MS.jointSpins(p, j) end,
+				set = function(v)
+					MS.pushUndo(v and "360 joint" or "Limit joint")
+					MS.setJointSpin(p, j, v)
+					if (MS.settings.symmetry and MS.JOINT_MIRROR[j]) then MS.mirrorJoint(p, j, true) end
+					MS.toast(MS.JOINT_NAMES[j] .. (v and " now spins all the way round" or " has its limits back"))
+					UI.requestRefresh()
+				end },
+			MS.jointSpins(p, j) and { kind = "hint", label = "Limits are off (10 / -10 means no limit)." } or
+				num("Max angle", "histop", 0.05, { tip = "How far it bends one way (radians)" }),
+			MS.jointSpins(p, j) and { kind = "hint", label = "Turn the toggle off to set angle limits again." } or
+				num("Min angle", "lostop", 0.05, { tip = "How far it bends the other way (radians)" }),
 			num("Strength", "maxforce", 10, { min = 0, tip = "Higher = stronger joint" }),
 			num("Max speed", "maxvelocity", 1, { min = 0, tip = "How fast it can move" }),
 			{ kind = "buttons", items = {
@@ -1680,33 +1841,6 @@ function UI.tabRules(pane)
 			MS.setFlags(v)
 		end })
 
-	-- Auto-grip
-	table.insert(entries, { kind = "header", label = "Auto-grip at match start" })
-	if (MS.hasBit(flags, 4)) then
-		table.insert(entries, { kind = "hint", label = "\"No grip\" is on above, so hands can't grab. Turn it off to use auto-grip." })
-	end
-	local gripOptions = { { "off", "Off" }, { "left", "Left" }, { "right", "Right" }, { "both", "Both" } }
-	for p = 0, math.max(1, MS.numPlayers) - 1 do
-		local pp = p
-		table.insert(entries, { kind = "choice", label = (PLAYER_NAMES[pp] or ("Player " .. (pp + 1))) .. " grabs", options = gripOptions,
-			tip = "Which hands start in grab mode when the match begins",
-			get = function() return MS.autoGrip[pp] or "off" end,
-			set = function(v)
-				MS.pushUndo("Auto-grip")
-				MS.autoGrip[pp] = v
-				MS.changed = true
-				MS.applyAutoGrip()
-			end })
-	end
-	table.insert(entries, { kind = "hint", rows = 2, scale = 0.42,
-		label = "Mod files can't store grips, so Export also writes autogrip_<name>.lua. Players run it with /ls to get the grips (works in Test mode here automatically)." })
-	table.insert(entries, { kind = "buttons", items = {
-		{ "Write auto-grip script now", function()
-			local file = MS.exportAutoGripScript(MS.saveName or "Untitled")
-			MS.toast(file and ("Wrote data/script/" .. file) or "Couldn't write the script")
-		end, disabled = not MS.autoGripActive() }
-	} })
-
 	table.insert(entries, { kind = "header", label = "Rules" })
 	for _, r in ipairs(MS.RULES) do
 		local cur = MS.getRule(r.name)
@@ -1724,6 +1858,20 @@ function UI.tabRules(pane)
 				table.insert(entries, { kind = "text", label = rule.title, tip = rule.tip,
 					get = function() return MS.getRule(rule.name) or "" end,
 					set = function(v) MS.setRule(rule.name, v) end })
+			elseif (rule.kind == "percent") then
+				local function pct() return MS.clamp(tonumber(MS.getRule(rule.name)) or rule.default or 100, rule.min, rule.max) end
+				table.insert(entries, { kind = "slider", label = rule.title .. "  (" .. (pct() == 0 and "Off" or (floor(pct() + 0.5) .. "%")) .. ")",
+					tip = rule.tip, min = rule.min, max = rule.max, minDisp = rule.minDisp, maxDisp = rule.maxDisp,
+					labelFn = function(v) v = floor(v + 0.5); return v == 0 and "Off" or (v .. "%") end,
+					get = pct,
+					set = function(v)
+						MS.pushUndo(rule.title, "rule:" .. rule.name)
+						MS.setRule(rule.name, floor(v + 0.5))
+					end })
+				table.insert(entries, { kind = "buttons", items = {
+					{ "100% (default)", function() MS.pushUndo(rule.title); MS.setRule(rule.name, 100); UI.requestRefresh() end },
+					{ "Off", function() MS.pushUndo(rule.title); MS.setRule(rule.name, 0); UI.requestRefresh() end }
+				} })
 			elseif (rule.kind == "vec3") then
 				local function parts()
 					local s = MS.getRule(rule.name) or "0 0 0"
@@ -1829,9 +1977,36 @@ function UI.tabFile(pane)
 				UI.confirm("Recover autosave?", "Loads the last automatic backup. Your current work can be brought back with Ctrl+Z.", {
 					{ "Recover", function() MS.loadProject("_autosave"); UI.requestRefresh() end }, { "Cancel" }
 				})
-			end, tip = "Autosave runs every minute while you work" },
+			end, tip = "Loads the last automatic backup" },
 			{ "Test mod", UI.enterTest, tip = "Play your mod, then come back to keep editing" }
 		} },
+		{ kind = "header", label = "Autosave" },
+		{ kind = "toggle", label = "Autosave while I work", tip = "Backs up to the \"_autosave\" project, which \"Recover autosave\" loads",
+			get = function() return MS.settings.autosave end,
+			set = function(v)
+				MS.settings.autosave = v
+				MS.saveSettings()
+				MS.toast(v and ("Autosave on - every " .. MS.settings.autosaveMinutes .. " min") or "Autosave off - remember to Save project / Export")
+				UI.requestRefresh()
+			end },
+		{ kind = "choice", label = "Every", tip = "How often to back up (only when something changed)",
+			options = { { 1, "1 min" }, { 2, "2 min" }, { 5, "5 min" }, { 10, "10 min" } },
+			get = function() return MS.settings.autosaveMinutes end,
+			set = function(v) MS.settings.autosaveMinutes = v; MS.saveSettings() end },
+		{ kind = "header", label = "Start from a template (objects + rules)" }
+	}
+	for _, t in ipairs(MS.TEMPLATES) do
+		local tt = t
+		table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
+			button(holder, 0, ry, floor(rw * 0.34), ROW, tt.name, function()
+				UI.confirm("Start a " .. tt.name .. " mod?", tt.desc .. "\nThis replaces the current mod. Ctrl+Z brings it back.", {
+					{ "Start it", function() MS.applyTemplate(tt.id); UI.requestRefresh() end }, { "Cancel" }
+				})
+			end, { tip = tt.desc, scale = 0.45 })
+			label(holder, floor(rw * 0.34) + 6, ry, rw - floor(rw * 0.34) - 6, ROW, tt.desc, LEFTMID, 0.38)
+		end })
+	end
+	local rest = {
 		{ kind = "header", label = "Reset (everything can be undone with Ctrl+Z)" },
 		{ kind = "buttons", items = {
 			{ "Reset everything", function()
@@ -1863,6 +2038,7 @@ function UI.tabFile(pane)
 		} },
 		{ kind = "hint", rows = 3, label = "Exported mods appear in your Mods list under \"modmaker\".\nProjects are saved in data/script/modstudio/projects/." }
 	}
+	for _, e in ipairs(rest) do table.insert(entries, e) end
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "file")
 end
 
@@ -1942,7 +2118,9 @@ function UI.tabSettings(pane)
 		{ kind = "buttons", items = { { "Reset panel layout", function() UI.resetLayout() end, tip = "Put every panel back where it started" } } },
 		{ kind = "slider", label = "Gizmo size", min = 50, max = 200, get = function() return st.gizmoSize end, set = function(v) st.gizmoSize = v end },
 		{ kind = "header", label = "Saving" },
-		tog("Autosave every minute", "autosave", "Backup goes to the \"_autosave\" project. Recover it from the File tab"),
+		tog("Autosave while I work", "autosave", "Backup goes to the \"_autosave\" project. Recover it from the File tab"),
+		{ kind = "choice", label = "Autosave every", options = { { 1, "1 min" }, { 2, "2 min" }, { 5, "5 min" }, { 10, "10 min" } },
+			get = function() return st.autosaveMinutes end, set = function(v) st.autosaveMinutes = v; MS.saveSettings() end },
 		{ kind = "header", label = "Engine units (measured automatically at start)" },
 		{ kind = "hint", rows = 2, scale = 0.42, label = (function()
 			local c = MS.calib
@@ -2065,12 +2243,65 @@ function UI.tabStats(pane)
 	if (biggestTri and limit and triSlices > limit * 0.25) then
 		table.insert(entries, { kind = "hint", rows = 2, label = "Triangles use a big share of your objects. Lower their Smoothness to free some up (biggest: " .. (MS.tris[biggestTri].name or ("Triangle " .. biggestTri)) .. ", " .. biggestN .. " slices)." })
 	end
+	table.insert(entries, { kind = "header", label = "Performance" })
+	local costMs = floor((MS.refreshCost or 0) * 1000 + 0.5)
+	local gapMs = floor(MS.refreshInterval() * 1000 + 0.5)
+	table.insert(entries, { kind = "hint", rows = 2, label = "The game takes about " .. costMs .. " ms to rebuild the world after a change. " ..
+		(gapMs > 0 and ("While you're editing, Mod Studio updates the objects every " .. gapMs .. " ms so the panels stay smooth.") or "That's fast, so every change shows right away.") })
 	table.insert(entries, { kind = "header", label = "Session" })
 	local ago = MS.lastAutosave and floor(MS.clock() - MS.lastAutosave) or nil
 	table.insert(entries, { kind = "hint", rows = 1, label = (MS.changed and "Unsaved changes" or "All changes exported/saved") .. "  |  " .. #MS.undoStack .. " undo steps" })
 	table.insert(entries, { kind = "hint", rows = 1, label = MS.settings.autosave and ("Last autosave check " .. (ago and (ago .. "s ago") or "-")) or "Autosave is off" })
 	table.insert(entries, { kind = "buttons", items = { { "Refresh", function() UI.requestRefresh() end } } })
 	UI.paged(pane, PAD, pane.size.h - PAD * 2, entries, "stats")
+end
+
+---------------------------------------------------------------------------
+-- Library (prefabs)
+---------------------------------------------------------------------------
+
+UI.prefabName = UI.prefabName or ""
+
+function UI.tabLibrary(pane)
+	local w = pane.size.w - PAD * 2
+	local y = PAD
+	local n = MS.selCount()
+	label(pane, PAD, y, w, ROW, "Save the selection as a reusable prefab:", LEFTMID, 0.45)
+	y = y + ROW + GAP
+	field(pane, PAD, y, w - 90, ROW, UI.prefabName, { align = LEFTMID, placeholder = "Prefab name" }, function(s) UI.prefabName = s end)
+	button(pane, PAD + w - 86, y, 86, ROW, "Save", function()
+		local name = UI.prefabName ~= "" and UI.prefabName or ("Prefab " .. (#MS.listPrefabs() + 1))
+		if (MS.savePrefab(name)) then
+			UI.prefabName = ""
+			UI.requestRefresh()
+		end
+	end, { disabled = n == 0, tip = n == 0 and "Select some objects first" or ("Saves the " .. n .. " selected objects") })
+	y = y + ROW + GAP * 3
+
+	local entries = { { kind = "header", label = "Built-in" } }
+	local function row(name, builtin)
+		table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
+			local delW = builtin and 0 or 56
+			button(holder, 0, ry, rw - delW - (builtin and 0 or GAP), ROW, "Place  " .. name, function()
+				MS.placePrefab(name)
+			end, { align = LEFTMID, scale = 0.45, tip = "Adds it where the camera is looking" })
+			if (not builtin) then
+				button(holder, rw - delW, ry, delW, ROW, "Delete", function()
+					UI.confirm("Delete prefab?", "Removes \"" .. name .. "\" from your library. Objects already placed stay.", {
+						{ "Delete", function() MS.deletePrefabFile(name); UI.requestRefresh() end }, { "Cancel" }
+					})
+				end, { scale = 0.42 })
+			end
+		end })
+	end
+	for _, b in ipairs(MS.BUILTIN_PREFABS) do row(b.name, true) end
+	local mine = MS.listPrefabs()
+	table.insert(entries, { kind = "header", label = "Your prefabs (" .. #mine .. ")" })
+	if (#mine == 0) then
+		table.insert(entries, { kind = "hint", rows = 2, label = "Build something, select it, give it a name above and press Save. It'll be here for every mod you make." })
+	end
+	for _, name in ipairs(mine) do row(name, false) end
+	UI.paged(pane, y, pane.size.h - y - PAD, entries, "library")
 end
 
 ---------------------------------------------------------------------------
@@ -2081,6 +2312,7 @@ end
 UI.TAB_BUILD = {
 	scene = function(p) UI.tabScene(p) end,
 	create = function(p) UI.tabCreate(p) end,
+	library = function(p) UI.tabLibrary(p) end,
 	links = function(p) UI.tabLinks(p) end,
 	properties = function(p) UI.tabProperties(p) end,
 	players = function(p) UI.tabPlayers(p) end,
@@ -2096,7 +2328,7 @@ UI.TAB_BUILD = {
 }
 
 UI.DOCKS = {
-	{ side = "left", tabs = { { "scene", "Scene" }, { "create", "Create" }, { "links", "Links" }, { "history", "History" } } },
+	{ side = "left", tabs = { { "scene", "Scene" }, { "create", "Create" }, { "library", "Library" }, { "links", "Links" }, { "history", "History" } } },
 	{ side = "right", tabs = { { "properties", "Properties" }, { "players", "Bodies" }, { "joints", "Joints" } } },
 	{ side = "bottom", tabs = { { "file", "File" }, { "rules", "Rules" }, { "world", "World" }, { "stats", "Stats" }, { "console", "Console" }, { "tbm", "TBM" }, { "settings", "Settings" } } }
 }
@@ -2267,7 +2499,9 @@ end
 function UI.setTool(tool)
 	MS.settings.tool = tool
 	UI.buildToolbar()
-	MS.toast(({ select = "Select tool", move = "Move tool - drag an arrow", rotate = "Rotate tool - drag a ring", scale = "Scale tool - drag a handle" })[tool])
+	if (tool ~= "measure") then MS.measure = {} end
+	MS.toast(({ select = "Select tool", move = "Move tool - drag an arrow", rotate = "Rotate tool - drag a ring", scale = "Scale tool - drag a handle",
+		measure = "Measure - click two points on objects or the floor" })[tool])
 end
 
 function UI.toggleSpace()
@@ -2294,9 +2528,16 @@ function UI.buildToolbar()
 		{ "Move", function() UI.setTool("move") end, st.tool == "move", "2 - Arrows: one axis. Squares: a plane. Center dot: free" },
 		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "3 - Drag a colored ring" },
 		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "4 - Drag a handle to stretch, center to resize evenly" },
+		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "5 - Click two points to see the distance between them" },
 		false,
 		{ st.space == "world" and "World" or "Local", UI.toggleSpace, false, "L - Gizmo aligned to the world or to the object" },
 		{ st.snap and "Snap on" or "Snap off", UI.toggleSnap, st.snap, "G - Snap to the grid (Ctrl flips it while dragging)" },
+		{ st.surfaceSnap and "Stick on" or "Stick off", function()
+			st.surfaceSnap = not st.surfaceSnap
+			MS.saveSettings()
+			UI.buildToolbar()
+			MS.toast(st.surfaceSnap and "Dragged objects rest on other objects and line up with their edges (Shift flips it)" or "Dragged objects slide at their own height (Shift flips it)")
+		end, st.surfaceSnap, "Dragged objects sit on whatever is under the cursor and line up edges. Hold Shift while dragging to flip" },
 		false,
 		{ "Undo", MS.undo, false, "Ctrl+Z" },
 		{ "Redo", MS.redo, false, "Ctrl+Y" },
@@ -2363,6 +2604,9 @@ local function contextHint()
 	end
 	if (G.hoverVertex) then return "Drag this corner to reshape the triangle" end
 	if (G.hoverObj) then return "Click to select " .. MS.objName(G.hoverObj) .. ". Drag to slide it (Alt: up/down)" end
+	if (MS.settings.tool == "measure") then
+		return (MS.measure and MS.measure.a and not MS.measure.b) and "Click the second point" or "Click a point on an object or the floor to start measuring (Snap rounds to the grid)"
+	end
 	if (G.hoverBody) then return "Click to select " .. (MS.BODY_NAMES[G.hoverBody.b] or "this body part") end
 	if (UI.isTabOpen("players")) then return "Click a body part in the world or the grid. Use the gizmo to move/resize it." end
 	if (UI.isTabOpen("joints")) then return "Click a joint in the world or the grid to edit it." end
@@ -2427,8 +2671,8 @@ UI.HELP = {
 	{ "Shift+drag", "Box-select on empty space" },
 	{ "Ctrl+A / Esc", "Select everything / deselect" },
 	{ "Editing", true },
-	{ "1 2 3 4", "Select, Move, Rotate, Scale tools" },
-	{ "Drag object", "Slide it along the ground (hold Alt for up/down)" },
+	{ "1 2 3 4 5", "Select, Move, Rotate, Scale, Measure tools" },
+	{ "Drag object", "It rests on what's under the cursor and lines up edges (Shift: off, Alt: up/down)" },
 	{ "Scroll (gizmo drag)", "Zoom in/out without letting go - the object stays put, keep dragging after" },
 	{ "Arrow keys", "Nudge by one grid step (PgUp/PgDn: up/down, Shift: finer)" },
 	{ "L / G", "World or local gizmo / snapping on or off" },
@@ -2530,7 +2774,7 @@ end
 ---------------------------------------------------------------------------
 
 function UI.enterTest()
-	MS.flush()
+	MS.flush(true)
 	MS.endDragSilently()
 	local ok, res = pcall(enter_mod_maker_test_mode)
 	if (not ok or not res) then
@@ -2538,7 +2782,6 @@ function UI.enterTest()
 		return
 	end
 	MS.testMode = true
-	MS.applyAutoGrip()
 	for _, el in ipairs(UI.roots()) do
 		if (el and not el.destroyed) then el:hide() end
 	end
