@@ -2025,7 +2025,7 @@ function UI.tabFile(pane)
 	local entries = {
 		{ kind = "text", label = "Mod name", get = function() return MS.saveName end, set = function(v) MS.saveName = v end },
 		{ kind = "buttons", items = {
-			{ "Export .tbm", function() MS.exportMod(MS.saveName) end, tip = "Ctrl+E. Saves a playable mod to data/mod/modmaker/" },
+			{ "Export .tbm", function() MS.exportChecked(MS.saveName) end, tip = "Ctrl+E. Checks the mod, then saves a playable mod to data/mod/modmaker/" },
 			{ "Save project", function() MS.saveProject(MS.saveName) end, tip = "Ctrl+S. Also keeps names, groups and triangles" }
 		} },
 		{ kind = "buttons", items = {
@@ -2356,6 +2356,51 @@ function UI.tabStats(pane)
 	if (biggestTri and limit and triSlices > limit * 0.25) then
 		table.insert(entries, { kind = "hint", rows = 2, label = "Triangles use a big share of your objects. Lower their Smoothness to free some up (biggest: " .. (MS.tris[biggestTri].name or ("Triangle " .. biggestTri)) .. ", " .. biggestN .. " slices)." })
 	end
+	-- Object saver
+	UI.saverTri = UI.saverTri or 8
+	local plan = MS.planObjectSaver(UI.saverTri > 0 and UI.saverTri or nil)
+	table.insert(entries, { kind = "header", label = "Object saver" })
+	table.insert(entries, { kind = "choice", label = "Triangles", tip = "Lower every triangle with more slices than this. Fewer slices = more stepped edges",
+		get = function() return UI.saverTri end, set = function(v) UI.saverTri = v end,
+		options = { { 0, "Keep" }, { 12, "12" }, { 8, "8" }, { 6, "6" }, { 4, "4" } } })
+	local why = {}
+	for k, n in pairs(plan.skipped) do
+		local names = { shape = "spheres/cylinders", triangle = "triangle slices", physics = "physics objects", link = "linked",
+			trigger = "with triggers", parent = "parents/children", hidden = "hidden" }
+		table.insert(why, n .. " " .. (names[k] or k))
+	end
+	table.sort(why)
+	table.insert(entries, { kind = "hint", rows = 3, label = plan.total > 0 and
+		("Can free " .. plan.total .. " object" .. (plan.total == 1 and "" or "s") .. ": " .. plan.mergeSaved .. " by joining boxes that line up into one bigger box, " ..
+			plan.triSaved .. " from triangles. Looks the same, same colours and settings.")
+		or "Nothing to free: no boxes line up, and no triangle has more slices than the setting above." })
+	if (#why > 0) then
+		table.insert(entries, { kind = "hint", rows = 2, scale = 0.42, label = "Left alone so nothing behaves differently: " .. table.concat(why, ", ") })
+	end
+	table.insert(entries, { kind = "buttons", items = {
+		{ plan.total > 0 and ("Free " .. plan.total .. " objects") or "Nothing to free", function() MS.applyObjectSaver(MS.planObjectSaver(UI.saverTri > 0 and UI.saverTri or nil)) end,
+			disabled = plan.total == 0, tip = "One undo step - Ctrl+Z puts everything back" }
+	} })
+
+	-- Mod check
+	table.insert(entries, { kind = "header", label = "Mod check (also runs when you export)" })
+	local issues = MS.checkMod()
+	if (#issues == 0) then
+		table.insert(entries, { kind = "hint", rows = 1, label = "No problems found." })
+	end
+	for _, it in ipairs(issues) do
+		local n = #it.objs
+		local text = (it.severity == "warn" and "(!) " or "(i) ") .. (n > 0 and (n .. " object" .. (n == 1 and "" or "s") .. " ") or "") .. it.text
+		table.insert(entries, { kind = "custom", rows = 2, render = function(holder, ry, rw)
+			local bw = n > 0 and 60 or 0
+			hint(holder, 0, ry, rw - bw - GAP, ROW * 2 + GAP, text, 0.44)
+			if (n > 0) then
+				button(holder, rw - bw, ry, bw, ROW, "Select", function() MS.selectIssue(it) end,
+					{ scale = 0.45, tip = "Select them and point the camera at them" })
+			end
+		end })
+	end
+
 	table.insert(entries, { kind = "header", label = "Performance" })
 	local costMs = floor((MS.refreshCost or 0) * 1000 + 0.5)
 	local gapMs = floor(MS.refreshInterval() * 1000 + 0.5)

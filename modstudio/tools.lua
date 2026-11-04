@@ -943,3 +943,299 @@ function MS.applyTemplate(id)
 	end
 	return ok
 end
+
+---------------------------------------------------------------------------
+-- Object saver: merge boxes that line up into one, and thin out triangles
+---------------------------------------------------------------------------
+
+local MERGE_EPS = 0.002
+-- Geometry is merged; everything else must match exactly
+local MERGE_SKIP = { pos_x = true, pos_y = true, pos_z = true, dims_x = true, dims_y = true, dims_z = true, mass = true }
+
+---Why a box can't take part in merging (nil = it can)
+local function mergeBlocker(idx, H, linked)
+	local o, m = MS.objs[idx], MS.meta[idx]
+	if (o.type ~= 1) then return "shape" end
+	if (m and m.tri) then return "triangle" end
+	if (not o.static) then return "physics" end
+	if (linked[idx]) then return "link" end
+	if (MS.isHidden and MS.isHidden(idx)) then return "hidden" end
+	if ((o.trig_mask or 0) ~= 0 or (o.trig_action or 0) ~= 0 or (o.trig_id or 0) ~= 0) then return "trigger" end
+	local key = "o" .. idx
+	if (H.parent[key] or H.children[key]) then return "parent" end
+	return nil
+end
+
+local function mergeSignature(o)
+	local parts = {}
+	for _, f in ipairs(MS.ENV_FIELDS) do
+		if (not MERGE_SKIP[f]) then
+			local v = o[f]
+			if (type(v) == "number") then v = string.format("%.3f", v) end
+			table.insert(parts, f .. "=" .. tostring(v))
+		end
+	end
+	return table.concat(parts, ";")
+end
+
+---Can boxes a and b (same rotation R) become one box? Returns the merged
+---{ pos, dims } or nil.
+local function mergePair(R, a, b)
+	local d = V.sub(b.pos, a.pos)
+	local along
+	for k = 1, 3 do
+		local c = V.dot(d, M.col(R, k))
+		if (abs(c) > MERGE_EPS or abs(a.dims[k] - b.dims[k]) > MERGE_EPS) then
+			if (along) then return nil end
+			along = k
+		end
+	end
+	if (not along) then along = 1 end -- exact twins: keep one
+	local u = M.col(R, along)
+	local c = V.dot(d, u)
+	-- Must touch or overlap so the union is still a solid box
+	if (abs(c) > (a.dims[along] + b.dims[along]) / 2 + MERGE_EPS) then return nil end
+	for k = 1, 3 do
+		if (k ~= along and (abs(V.dot(d, M.col(R, k))) > MERGE_EPS or abs(a.dims[k] - b.dims[k]) > MERGE_EPS)) then return nil end
+	end
+	local lo = math.min(-a.dims[along] / 2, c - b.dims[along] / 2)
+	local hi = math.max(a.dims[along] / 2, c + b.dims[along] / 2)
+	local dims = { a.dims[1], a.dims[2], a.dims[3] }
+	dims[along] = hi - lo
+	return { pos = V.add(a.pos, V.mul(u, (lo + hi) / 2)), dims = dims }
+end
+
+---Works out what the object saver would do, without changing anything.
+---triTarget: lower every triangle with more slices than this (nil = leave them)
+function MS.planObjectSaver(triTarget)
+	local H = MS.hier()
+	local linked = {}
+	for _, ej in pairs(MS.ejs) do
+		if (ej.obj1) then linked[ej.obj1] = true end
+		if (ej.obj2) then linked[ej.obj2] = true end
+	end
+	local buckets, skipped = {}, {}
+	for _, idx in ipairs(MS.sortedKeys(MS.objs)) do
+		local why = mergeBlocker(idx, H, linked)
+		if (why) then
+			skipped[why] = (skipped[why] or 0) + 1
+		else
+			local o = MS.objs[idx]
+			local sig = mergeSignature(o)
+			buckets[sig] = buckets[sig] or {}
+			table.insert(buckets[sig], { idx = idx, pos = MS.objPos(idx), dims = { o.dims_x or 0, o.dims_y or 0, o.dims_z or 0 }, absorbed = {} })
+		end
+	end
+	local merges = {}
+	local removed = 0
+	for _, list in pairs(buckets) do
+		if (#list > 1) then
+			local R = MS.objRot(list[1].idx)
+			-- Keep joining pairs until nothing in this bucket lines up any more
+			local changed = true
+			while (changed) do
+				changed = false
+				for i = 1, #list do
+					local a = list[i]
+					if (not a.gone) then
+						for j = i + 1, #list do
+							local b = list[j]
+							if (not b.gone) then
+								local m = mergePair(R, a, b)
+								if (m) then
+									a.pos, a.dims = m.pos, m.dims
+									table.insert(a.absorbed, b.idx)
+									for _, x in ipairs(b.absorbed) do table.insert(a.absorbed, x) end
+									b.gone = true
+									changed = true
+								end
+							end
+						end
+					end
+				end
+			end
+			for _, a in ipairs(list) do
+				if (not a.gone and #a.absorbed > 0) then
+					table.insert(merges, { keep = a.idx, pos = a.pos, dims = a.dims, remove = a.absorbed })
+					removed = removed + #a.absorbed
+				end
+			end
+		end
+	end
+	local tris, triSaved = {}, 0
+	if (triTarget) then
+		for id, t in pairs(MS.tris) do
+			local n = #t.objs
+			if (n > triTarget) then
+				table.insert(tris, id)
+				triSaved = triSaved + (n - triTarget)
+			end
+		end
+	end
+	return { merges = merges, mergeSaved = removed, tris = tris, triTarget = triTarget, triSaved = triSaved,
+		total = removed + triSaved, skipped = skipped }
+end
+
+---Does what planObjectSaver(triTarget) describes, as one undo step
+function MS.applyObjectSaver(plan)
+	if (not plan or plan.total == 0) then
+		MS.toast("Nothing to save - every box is already as big as it can be")
+		return 0
+	end
+	local before = MS.count(MS.objs)
+	MS.withUndo("Object saver", function()
+		for _, m in ipairs(plan.merges) do
+			if (MS.objs[m.keep]) then
+				MS.objSet(m.keep, "pos_x", m.pos[1])
+				MS.objSet(m.keep, "pos_y", m.pos[2])
+				MS.objSet(m.keep, "pos_z", m.pos[3])
+				MS.objSet(m.keep, "dims_x", m.dims[1])
+				MS.objSet(m.keep, "dims_y", m.dims[2])
+				MS.objSet(m.keep, "dims_z", m.dims[3])
+				for _, idx in ipairs(m.remove) do
+					if (MS.objs[idx]) then MS.deleteObjRaw(idx) end
+				end
+			end
+		end
+		for _, id in ipairs(plan.tris) do
+			local t = MS.tris[id]
+			if (t and plan.triTarget and (t.slices or 0) > plan.triTarget) then
+				t.slices = plan.triTarget
+				MS.triBuild(id)
+			end
+		end
+		if (MS.hierFix) then MS.hierFix() end
+	end)
+	MS.selClear()
+	local saved = before - MS.count(MS.objs)
+	MS.toast("Object saver freed " .. saved .. " object" .. (saved == 1 and "" or "s") .. " (Ctrl+Z undoes)")
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+	return saved
+end
+
+---------------------------------------------------------------------------
+-- Check before export: things that are probably mistakes
+---------------------------------------------------------------------------
+
+local FAR = 60
+
+---Is world point p inside object idx's box (grown by `pad`)?
+local function insideObj(idx, p, pad)
+	local o = MS.objs[idx]
+	local rel = V.sub(p, MS.objPos(idx))
+	local e = MS.objExtents(idx)
+	if (o.type == 0) then return V.len(rel) <= e[1] / 2 + pad end
+	local R = MS.objRot(idx)
+	for k = 1, 3 do
+		if (abs(V.dot(rel, M.col(R, k))) > e[k] / 2 + pad) then return false end
+	end
+	return true
+end
+
+---List of { severity = "warn" | "info", text, objs = { idx... } }, worst first
+function MS.checkMod()
+	local issues = {}
+	local function add(sev, text, objs)
+		if (#objs > 0) then table.insert(issues, { severity = sev, text = text, objs = objs }) end
+	end
+	local all = MS.sortedKeys(MS.objs)
+
+	-- Inside a player at the start
+	local bodies = {}
+	if (MS.bodyWorld) then
+		for p = 0, math.max(1, MS.numPlayers or 2) - 1 do
+			for b = 0, MS.NUM_BODIES - 1 do
+				local ok, w = pcall(MS.bodyWorld, p, b)
+				if (ok and w and w.pos) then table.insert(bodies, w.pos) end
+			end
+		end
+	end
+	local inPlayer = {}
+	for _, idx in ipairs(all) do
+		local o = MS.objs[idx]
+		if (o.visible ~= false or o.static) then
+			for _, bp in ipairs(bodies) do
+				if (insideObj(idx, bp, 0)) then
+					table.insert(inPlayer, idx)
+					break
+				end
+			end
+		end
+	end
+	add("warn", "inside a player at the start - they'll be stuck or thrown around", inPlayer)
+
+	-- Under the floor / far away
+	local under, far = {}, {}
+	for _, idx in ipairs(all) do
+		local p = MS.objPos(idx)
+		local top = 2 * p[3] - MS.objBottom(idx)
+		if (top < -0.01) then table.insert(under, idx) end
+		if (math.sqrt(p[1] * p[1] + p[2] * p[2]) > FAR or abs(p[3]) > FAR) then table.insert(far, idx) end
+	end
+	add("warn", "completely under the floor - nobody will ever see or touch them", under)
+	add("warn", "more than " .. FAR .. " away from the middle of the arena", far)
+
+	-- Stacked twins
+	local seen, twins = {}, {}
+	for _, idx in ipairs(all) do
+		local o = MS.objs[idx]
+		local key = string.format("%d|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f", o.type or 1, o.pos_x or 0, o.pos_y or 0, o.pos_z or 0,
+			o.rot_x or 0, o.rot_y or 0, o.rot_z or 0, o.dims_x or 0, o.dims_y or 0, o.dims_z or 0)
+		if (seen[key]) then table.insert(twins, idx) else seen[key] = idx end
+	end
+	add("warn", "exact copies sitting on top of another object (the extra copies are selected)", twins)
+
+	-- Tiny and see-through
+	local tiny, clear, invisible = {}, {}, {}
+	for _, idx in ipairs(all) do
+		local o, e = MS.objs[idx], MS.objExtents(idx)
+		if (math.max(e[1], e[2], e[3]) < 0.02) then table.insert(tiny, idx) end
+		if (o.visible ~= false and (o.color_a or 1) < 0.02) then table.insert(clear, idx) end
+		if (o.visible == false) then table.insert(invisible, idx) end
+	end
+	add("warn", "so small you can hardly see them", tiny)
+	add("info", "fully see-through (colour alpha 0) but still solid", clear)
+	add("info", "invisible (still solid - fine for invisible walls)", invisible)
+
+	-- Object budget
+	local limit = MS.settings.objLimit or 0
+	local n = #all
+	if (limit > 0 and n > limit) then
+		table.insert(issues, 1, { severity = "warn", text = n .. " objects - over the game's limit of " .. limit .. ". The Object saver can help", objs = {} })
+	elseif (limit > 0 and n >= limit * 0.9) then
+		table.insert(issues, { severity = "info", text = n .. " of " .. limit .. " objects used - nearly full", objs = {} })
+	end
+	table.sort(issues, function(a, b)
+		if (a.severity ~= b.severity) then return a.severity == "warn" end
+		return #a.objs > #b.objs
+	end)
+	return issues
+end
+
+---Selects the objects of one check result and points the camera at them
+function MS.selectIssue(issue)
+	if (not issue or #issue.objs == 0) then return end
+	MS.selClear()
+	for _, idx in ipairs(issue.objs) do
+		if (MS.objs[idx]) then MS.selAdd(idx) end
+	end
+	if (MS.focusSelection) then MS.focusSelection() end
+	MS.toast("Selected " .. #issue.objs .. " object" .. (#issue.objs == 1 and "" or "s"))
+end
+
+---Export, but first show any warnings from the check
+function MS.exportChecked(name)
+	local warns = 0
+	for _, it in ipairs(MS.checkMod()) do
+		if (it.severity == "warn") then warns = warns + 1 end
+	end
+	if (warns == 0 or not (MS.UI and MS.UI.confirm)) then
+		return MS.exportMod(name)
+	end
+	MS.UI.confirm("Export with " .. warns .. " warning" .. (warns == 1 and "" or "s") .. "?",
+		"The mod check found things that are probably mistakes. Have a look, or export anyway.", {
+			{ "Show me", function() MS.UI.selectTab("stats") end },
+			{ "Export anyway", function() MS.exportMod(name) end },
+			{ "Cancel" }
+		})
+end

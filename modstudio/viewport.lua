@@ -2149,7 +2149,7 @@ function MS.onKeyDown(key)
 	elseif (ctrl and ch == "s") then
 		MS.saveProject(MS.saveName or "Untitled")
 	elseif (ctrl and ch == "e") then
-		MS.exportMod(MS.saveName or "Untitled")
+		MS.exportChecked(MS.saveName or "Untitled")
 	elseif (ctrl) then
 		handled = false
 	elseif (ch == "1") then
