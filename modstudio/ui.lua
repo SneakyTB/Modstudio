@@ -3538,21 +3538,54 @@ function UI.toggleHelp(force)
 
 	local HEAD, FOOT, MINROW = 44, 44, 16
 	local rows = UI.HELP
-	local cols, split = 1, #rows + 1
-	local W = math.min(560, WIN_W - 40)
-	if (HEAD + #rows * 20 + FOOT > avail) then
-		-- Two columns, split at the section header nearest the middle
-		cols = 2
-		W = math.min(1000, WIN_W - 40)
-		local best
+	local bodyTop = UI.textSize("body") * UI.textK
+
+	-- Row heights for a column count / base row height. A description that doesn't fit on one line
+	-- gets a taller row so the text wraps onto a second line instead of being cut off.
+	local function plan(c, rh)
+		local pW = math.min(c == 1 and 560 or 1000, WIN_W - 40)
+		local pColW = (pW - 4) / c
+		local pKeyW = c == 1 and 150 or 130
+		local descAvail = pColW - pKeyW - 30 - 4
+		local h2 = floor(ROW * 1.6) + 2
+		local hs, total = {}, 0
 		for i, row in ipairs(rows) do
-			if (row[2] == true and i > 1 and (not best or math.abs(i - #rows / 2) < math.abs(best - #rows / 2))) then best = i end
+			local h = rh
+			if (row[2] ~= true) then
+				local tw = UI.textWidth(row[2], 4)
+				if (tw and tw * bodyTop > descAvail) then h = math.max(h2, rh) end
+			end
+			hs[i] = h
+			total = total + h
 		end
-		split = best or (floor(#rows / 2) + 1)
+		local sp, maxH = #rows + 1, total
+		if (c == 2) then
+			local best, cum, bestD = nil, 0, nil
+			for i, row in ipairs(rows) do
+				if (row[2] == true and i > 1) then
+					local d = math.abs(cum - total / 2)
+					if (not bestD or d < bestD) then best, bestD = i, d end
+				end
+				cum = cum + hs[i]
+			end
+			sp = best or (floor(#rows / 2) + 1)
+			local left = 0
+			for i = 1, sp - 1 do left = left + hs[i] end
+			maxH = math.max(left, total - left)
+		end
+		return { W = pW, colW = pColW, keyW = pKeyW, hs = hs, split = sp, maxH = maxH, cols = c }
 	end
-	local maxRows = cols == 1 and #rows or math.max(split - 1, #rows - split + 1)
-	local rowH = math.max(MINROW, math.min(20, floor((avail - HEAD - FOOT) / maxRows)))
-	local H = math.min(avail, HEAD + maxRows * rowH + FOOT)
+	local pl = plan(1, 20)
+	if (HEAD + pl.maxH + FOOT > avail) then
+		pl = plan(2, 20)
+		local rh = 19
+		while (HEAD + pl.maxH + FOOT > avail and rh >= MINROW) do
+			pl = plan(2, rh)
+			rh = rh - 1
+		end
+	end
+	local cols, split, W, colW, keyW = pl.cols, pl.split, pl.W, pl.colW, pl.keyW
+	local H = math.min(avail, HEAD + pl.maxH + FOOT)
 
 	local black, white = { 0, 0, 0, 1 }, { 1, 1, 1, 1 }
 	local box = UIElement:new({
@@ -3564,13 +3597,13 @@ function UI.toggleHelp(force)
 	UI.help = box
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = white, uiColor = black }, true)
 	label(inner, 14, 8, W - 30, 30, MS.settings.firstRun and "Welcome to Mod Studio!" or "Mod Studio - shortcuts", LEFTMID, "title", UI.TITLE_FONT)
-	local colW = (W - 4) / cols
-	local keyW = cols == 1 and 150 or 130
+	local ys = { 0, 0 }
 	for i, row in ipairs(rows) do
-		local col, idx = 0, i
-		if (cols == 2 and i >= split) then col, idx = 1, i - split + 1 end
+		local col = (cols == 2 and i >= split) and 1 or 0
+		local rowH = pl.hs[i]
 		local x0 = floor(col * colW)
-		local y = HEAD + (idx - 1) * rowH
+		local y = HEAD + ys[col + 1]
+		ys[col + 1] = ys[col + 1] + rowH
 		if (row[2] == true) then
 			local bar = inner:addChild({ pos = { x0 + 10, y + 2 }, size = { colW - 20, rowH - 2 }, bgColor = { 0.85, 0.85, 0.85, 1 }, shapeType = ROUNDED, rounded = UI.r(3) })
 			UI.addText(bar, false, row[1], 6, nil, UI.TITLE_FONT, LEFTMID, "heading")

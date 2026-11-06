@@ -577,7 +577,9 @@ local function liveObj(idx)
 		ok = pcall(set_obj_sides, w, o.dims_x or 1, o.dims_y or 1, o.dims_z or 1)
 	end
 	if (not ok) then return false end
-	pcall(set_obj_color, w, o.color_r or 1, o.color_g or 1, o.color_b or 1, o.color_a or 1)
+	local alpha = o.color_a or 1
+	if (MS.modelBoxHidden and MS.modelBoxHidden[idx] and not MS.revealing) then alpha = 0 end
+	pcall(set_obj_color, w, o.color_r or 1, o.color_g or 1, o.color_b or 1, alpha)
 	return true
 end
 MS.liveObj = liveObj

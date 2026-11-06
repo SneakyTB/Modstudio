@@ -365,6 +365,14 @@ local function uiCache()
 	return _G.UIElement3DModelCache
 end
 
+---One echo per model name when it can't be loaded for the preview
+function MS.modelDiag(name, why)
+	MS.modelDiagDone = MS.modelDiagDone or {}
+	if (MS.modelDiagDone[name]) then return end
+	MS.modelDiagDone[name] = true
+	echo("Mod Studio: can't preview model '" .. tostring(name) .. "': " .. tostring(why))
+end
+
 function MS.modelSlot(name)
 	local rec = MS.modelSlots[name]
 	if (rec) then
@@ -382,8 +390,10 @@ function MS.modelSlot(name)
 		return nil
 	end
 	local file = ROOT .. "/" .. name
-	if (MS.modelNameProblem(name) or not MS.fileExists(file .. ".obj")) then
+	local problem = MS.modelNameProblem(name)
+	if (problem or not MS.fileExists(file .. ".obj")) then
 		MS.modelSlots[name] = { failed = clock() }
+		MS.modelDiag(name, problem or ("missing file " .. file .. ".obj"))
 		return nil
 	end
 	local cache = uiCache()
@@ -400,11 +410,13 @@ function MS.modelSlot(name)
 	end
 	if (not slot) then
 		MS.modelSlots[name] = { failed = clock() }
+		MS.modelDiag(name, "no free model slot")
 		return nil
 	end
 	local ok, res = pcall(load_obj, slot, file, 1)
 	if (not ok or not res) then
 		MS.modelSlots[name] = { failed = clock() }
+		MS.modelDiag(name, "load_obj failed for " .. file .. " (" .. tostring(ok and res or res) .. ")")
 		return nil
 	end
 	cache[slot] = { name = file, count = 1 }
@@ -501,7 +513,16 @@ end
 
 ---Called from the draw3d hook every frame. live = true in test mode.
 function MS.drawModels(live)
-	if (not MS.settings.modelPreview or not draw_obj_m) then return end
+	if (not MS.settings.modelPreview or not draw_obj_m) then
+		-- Preview off: give the plain boxes back
+		if (not live and MS.modelBoxHidden and next(MS.modelBoxHidden)) then
+			local old = MS.modelBoxHidden
+			MS.modelBoxHidden = {}
+			for idx in pairs(old) do if (MS.syncHidden) then MS.syncHidden(idx) end end
+			MS.needRefresh = true
+		end
+		return
+	end
 	local T
 	if (live) then
 		T = MS.testModels
@@ -516,12 +537,20 @@ function MS.drawModels(live)
 	else
 		MS.testModels = nil
 	end
+	local want
+	if (not live) then
+		MS.modelBoxHidden = MS.modelBoxHidden or {}
+		want = {}
+	end
 	for idx, m in pairs(MS.meta) do
 		if (m.useModel and m.modelName and m.modelName ~= "") then
 			local o = MS.objs[idx]
 			if (o and o.visible ~= false) then
 				local slot = MS.modelSlot(m.modelName)
 				if (slot) then
+					-- The engine draws the object's own opaque box, which would cover the model: make it
+					-- invisible in the editor only (see MS.syncHidden; export / test / close restore it)
+					if (want and not MS.modelProblem) then want[idx] = true end
 					local s = MS.modelScale(idx)
 					local x, y, z, R = o.pos_x or 0, o.pos_y or 0, o.pos_z or 0, nil
 					if (T and T.map[idx] ~= nil) then
@@ -546,6 +575,19 @@ function MS.drawModels(live)
 					end
 				end
 			end
+		end
+	end
+	if (want) then
+		local changed = {}
+		for idx in pairs(want) do
+			if (not MS.modelBoxHidden[idx]) then MS.modelBoxHidden[idx] = true; changed[#changed + 1] = idx end
+		end
+		for idx in pairs(MS.modelBoxHidden) do
+			if (not want[idx]) then MS.modelBoxHidden[idx] = nil; changed[#changed + 1] = idx end
+		end
+		if (#changed > 0 and MS.syncHidden) then
+			for _, idx in ipairs(changed) do MS.syncHidden(idx) end
+			MS.needRefresh = true
 		end
 	end
 end

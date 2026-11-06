@@ -57,9 +57,17 @@ local function gizmoW() return MS.clamp(tonumber(MS.settings.gizmoWidth) or 1, 0
 local HIER_COLOR = { 0.80, 0.55, 1 }
 local AXIS_NAMES = { "X", "Y", "Z" }
 
-local function ctrlDown() local ok, v = pcall(get_keyboard_ctrl); return ok and (v == 1 or v == true) end
-local function shiftDown() local ok, v = pcall(get_keyboard_shift); return ok and (v == 1 or v == true) end
-local function altDown() local ok, v = pcall(get_keyboard_alt); return ok and (v == 1 or v == true) end
+-- The game's own scripts test these with "> 0": the value is a modifier state (may be a bit mask such as
+-- 64 / 128 for left / right Ctrl), not strictly 1, so anything above zero means held.
+local function modDown(f)
+	local ok, v = pcall(f)
+	if (not ok) then return false end
+	if (type(v) == "number") then return v > 0 end
+	return v == true
+end
+local function ctrlDown() return modDown(get_keyboard_ctrl) end
+local function shiftDown() return modDown(get_keyboard_shift) end
+local function altDown() return modDown(get_keyboard_alt) end
 MS.ctrlDown, MS.shiftDown, MS.altDown = ctrlDown, shiftDown, altDown
 
 ---Snapping is on when the setting is on, Ctrl held flips it for the current drag
@@ -1422,19 +1430,121 @@ function MS.draw3d()
 	for id in pairs(tris) do fill(MS.tris[id], 0.22) end
 end
 
+---------------------------------------------------------------------------
+-- Clipping: everything drawn over the 3D view stays inside the free viewport, i.e. the screen minus the
+-- toolbar, status bar and docked panels (our 2D hook would otherwise draw above the panels).
+---------------------------------------------------------------------------
+
+local CLIP -- { x0, y0, x1, y1 } or nil (no clipping)
+
+---Free viewport rectangle from the UI's top-level pieces
+function MS.viewportRect()
+	local UI = MS.UI
+	local W, H = WIN_W or 0, WIN_H or 0
+	local x0, y0, x1, y1 = 0, 0, W, H
+	if (not UI or not UI.roots or W <= 0 or H <= 0) then return x0, y0, x1, y1 end
+	local skip = { [UI.dialog or false] = true, [UI.help or false] = true }
+	for _, el in ipairs(UI.roots()) do
+		if (el and not skip[el] and not el.destroyed and el.displayed ~= false and el.pos and el.size) then
+			local x, y, w, h = el.pos.x, el.pos.y, el.size.w, el.size.h
+			local tol = 3
+			if (w > 0 and h > 0 and not (w >= W - tol and h >= H - tol)) then
+				-- Cut away from the screen edge the panel is attached to (shallowest cut when several)
+				local best, depth
+				local function try(edge, d)
+					if (not depth or d < depth) then best, depth = edge, d end
+				end
+				if (x <= tol) then try("l", w) end
+				if (x + w >= W - tol) then try("r", w) end
+				if (y <= tol) then try("t", h) end
+				if (y + h >= H - tol) then try("b", h) end
+				if (not best) then
+					-- Floating panel: cut from the nearest side along its longer direction
+					if (w >= h) then best = (y + h / 2 < H / 2) and "t" or "b"
+					else best = (x + w / 2 < W / 2) and "l" or "r" end
+				end
+				if (best == "l") then x0 = math.max(x0, x + w)
+				elseif (best == "r") then x1 = math.min(x1, x)
+				elseif (best == "t") then y0 = math.max(y0, y + h)
+				else y1 = math.min(y1, y) end
+			end
+		end
+	end
+	return x0, y0, math.max(x0, x1), math.max(y0, y1)
+end
+
+local function inClip(x, y, m)
+	if (not CLIP) then return true end
+	m = m or 0
+	return x >= CLIP[1] + m and x <= CLIP[3] - m and y >= CLIP[2] + m and y <= CLIP[4] - m
+end
+
+---Liang-Barsky: the part of the segment inside the clip rectangle, or nil
+local function clipSeg(x1, y1, x2, y2, pad)
+	if (not CLIP) then return x1, y1, x2, y2 end
+	pad = pad or 0
+	local xmin, ymin, xmax, ymax = CLIP[1] + pad, CLIP[2] + pad, CLIP[3] - pad, CLIP[4] - pad
+	if (xmin >= xmax or ymin >= ymax) then return nil end
+	local dx, dy = x2 - x1, y2 - y1
+	local t0, t1 = 0, 1
+	local p = { -dx, dx, -dy, dy }
+	local q = { x1 - xmin, xmax - x1, y1 - ymin, ymax - y1 }
+	for i = 1, 4 do
+		if (p[i] == 0) then
+			if (q[i] < 0) then return nil end
+		else
+			local r = q[i] / p[i]
+			if (p[i] < 0) then
+				if (r > t1) then return nil end
+				if (r > t0) then t0 = r end
+			else
+				if (r < t0) then return nil end
+				if (r < t1) then t1 = r end
+			end
+		end
+	end
+	return x1 + t0 * dx, y1 + t0 * dy, x1 + t1 * dx, y1 + t1 * dy
+end
+
+local function cline(x1, y1, x2, y2, w)
+	local a, b, c, d = clipSeg(x1, y1, x2, y2, (w or 1) / 2)
+	if (a) then pcall(draw_line, a, b, c, d, w) end
+end
+
+---Filled rectangle, cut to the clip area
+local function cquad(x, y, w, h)
+	if (CLIP) then
+		local ax, ay = math.max(x, CLIP[1]), math.max(y, CLIP[2])
+		local bx, by = math.min(x + w, CLIP[3]), math.min(y + h, CLIP[4])
+		if (bx <= ax or by <= ay) then return end
+		x, y, w, h = ax, ay, bx - ax, by - ay
+	end
+	pcall(draw_quad, x, y, w, h)
+end
+
 local function line2d(a, b, w)
-	pcall(draw_line, a[1], a[2], b[1], b[2], w)
+	cline(a[1], a[2], b[1], b[2], w)
 end
 
 local function disk(x, y, r)
+	if (not inClip(x, y, r)) then return end
 	pcall(draw_disk, x, y, 0, r, 20, 1, 0, 360, 0)
 end
 
 local function ring2d(x, y, r, w)
-	pcall(draw_disk, x, y, math.max(0, r - w / 2), r + w / 2, 40, 1, 0, 360, 0)
+	local n = 48
+	for i = 0, n - 1 do
+		local a1, a2 = i / n * math.pi * 2, (i + 1) / n * math.pi * 2
+		cline(x + math.cos(a1) * r, y + math.sin(a1) * r, x + math.cos(a2) * r, y + math.sin(a2) * r, w)
+	end
 end
 
 local function text(str, x, y, r, g, b, a)
+	if (CLIP) then
+		local ok, w = pcall(get_string_length, str, 1)
+		w = (ok and type(w) == "number") and w or 40
+		if (not (inClip(x, y) and inClip(x + w, y + 16))) then return end
+	end
 	set_color(0, 0, 0, 0.6 * (a or 1))
 	pcall(draw_text, str, x + 1, y + 1, 1)
 	set_color(r or 1, g or 1, b or 1, a or 1)
@@ -1456,12 +1566,14 @@ function MS.draw2d()
 	if (not F) then return end
 	MS.applyViewColors()
 	local ow, gw = outlineW(), gizmoW()
+	local cx0, cy0, cx1, cy1 = MS.viewportRect()
+	CLIP = { cx0, cy0, cx1, cy1 }
 
 	-- Outlines
 	for _, ol in ipairs(F.outlines) do
 		local c = ol.color
 		set_color(c[1], c[2], c[3], ol.alpha or 0.95)
-		for _, s in ipairs(ol.segs or {}) do pcall(draw_line, s[1], s[2], s[3], s[4], ow) end
+		for _, s in ipairs(ol.segs or {}) do cline(s[1], s[2], s[3], s[4], ow) end
 		if (ol.circle) then ring2d(ol.circle[1], ol.circle[2], ol.circle[3], ow) end
 	end
 	if (F.hoverTri) then
@@ -1543,9 +1655,9 @@ function MS.draw2d()
 					local hovered = sameHandle(hov, g.tool == "move" and "axis" or "saxis", k)
 					local col = axisColor(k, hovered)
 					set_color(0, 0, 0, 0.45)
-					pcall(draw_line, c[1], c[2], a.tip[1], a.tip[2], (hovered and 6 or 5) * gw)
+					cline(c[1], c[2], a.tip[1], a.tip[2], (hovered and 6 or 5) * gw)
 					set_color(col[1], col[2], col[3], 1)
-					pcall(draw_line, c[1], c[2], a.tip[1], a.tip[2], (hovered and 4 or 3) * gw)
+					cline(c[1], c[2], a.tip[1], a.tip[2], (hovered and 4 or 3) * gw)
 					if (g.tool == "move") then
 						set_color(0, 0, 0, 0.5)
 						disk(a.tip[1], a.tip[2], 8)
@@ -1553,9 +1665,9 @@ function MS.draw2d()
 						disk(a.tip[1], a.tip[2], 6.5)
 					else
 						set_color(0, 0, 0, 0.5)
-						pcall(draw_quad, a.tip[1] - 7, a.tip[2] - 7, 14, 14)
+						cquad(a.tip[1] - 7, a.tip[2] - 7, 14, 14)
 						set_color(col[1], col[2], col[3], 1)
-						pcall(draw_quad, a.tip[1] - 5.5, a.tip[2] - 5.5, 11, 11)
+						cquad(a.tip[1] - 5.5, a.tip[2] - 5.5, 11, 11)
 					end
 					text(AXIS_NAMES[k], a.tip[1] + 9, a.tip[2] - 9, col[1], col[2], col[3], 1)
 				end
@@ -1616,7 +1728,7 @@ function MS.draw2d()
 			local ok, w = pcall(get_string_length, s, 1)
 			w = ok and w or 120
 			set_color(0, 0, 0, 0.7)
-			pcall(draw_quad, mx - w / 2 - 6, my - 26, w + 12, 22)
+			cquad(mx - w / 2 - 6, my - 26, w + 12, 22)
 			text(s, mx - w / 2, my - 24, 0.6, 0.95, 1)
 		end
 	end
@@ -1637,12 +1749,12 @@ function MS.draw2d()
 		local x1, y1 = math.min(mq.x0, mq.x1), math.min(mq.y0, mq.y1)
 		local w, h = abs(mq.x1 - mq.x0), abs(mq.y1 - mq.y0)
 		set_color(0.35, 0.9, 1, 0.12)
-		pcall(draw_quad, x1, y1, w, h)
+		cquad(x1, y1, w, h)
 		set_color(0.35, 0.9, 1, 0.9)
-		pcall(draw_line, x1, y1, x1 + w, y1, 1)
-		pcall(draw_line, x1, y1 + h, x1 + w, y1 + h, 1)
-		pcall(draw_line, x1, y1, x1, y1 + h, 1)
-		pcall(draw_line, x1 + w, y1, x1 + w, y1 + h, 1)
+		cline(x1, y1, x1 + w, y1, 1)
+		cline(x1, y1 + h, x1 + w, y1 + h, 1)
+		cline(x1, y1, x1, y1 + h, 1)
+		cline(x1 + w, y1, x1 + w, y1 + h, 1)
 	end
 
 	-- Drag readout next to the cursor
@@ -1652,7 +1764,7 @@ function MS.draw2d()
 		local ok, w = pcall(get_string_length, s, 1)
 		w = ok and w or 100
 		set_color(0, 0, 0, 0.65)
-		pcall(draw_quad, drag.mx + 16, drag.my + 14, w + 12, 22)
+		cquad(drag.mx + 16, drag.my + 14, w + 12, 22)
 		text(s, drag.mx + 22, drag.my + 16)
 	end
 end
@@ -2362,6 +2474,11 @@ function MS.onKeyDown(key)
 	local ctrl, shift = ctrlDown(), shiftDown()
 	local handled = true
 	local ch = (key >= 32 and key < 127) and string.char(key):lower() or nil
+	-- With Ctrl held some systems deliver the control character (Ctrl+A = 1 ... Ctrl+Z = 26) instead of the letter.
+	-- Backspace, Tab and Enter (8, 9, 13) are real keys, so they are not read as Ctrl+H, I, M.
+	if (not ch and ctrl and key >= 1 and key <= 26 and key ~= 8 and key ~= 9 and key ~= 13) then
+		ch = string.char(96 + key)
+	end
 
 	if (ctrl and ch == "z") then
 		if (shift) then MS.redo() else MS.undo() end

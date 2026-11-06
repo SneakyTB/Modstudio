@@ -29,6 +29,10 @@ function MS.syncHidden(idx)
 	if (MS.isHidden(idx) and not MS.revealing) then
 		pcall(set_mod_envobj, idx, "visible", MS.toEngine("visible", false))
 		pcall(set_mod_envobj, idx, "color_a", 0)
+	elseif (MS.modelBoxHidden and MS.modelBoxHidden[idx] and not MS.revealing) then
+		-- Object carries a previewed 3D model: only its plain box is hidden (editor only)
+		pcall(set_mod_envobj, idx, "visible", MS.toEngine("visible", o.visible ~= false))
+		pcall(set_mod_envobj, idx, "color_a", 0)
 	else
 		pcall(set_mod_envobj, idx, "visible", MS.toEngine("visible", o.visible ~= false))
 		pcall(set_mod_envobj, idx, "color_a", o.color_a or 1)
@@ -42,7 +46,7 @@ end
 
 function MS.anyHidden()
 	for idx in pairs(MS.objs) do
-		if (MS.isHidden(idx)) then return true end
+		if (MS.isHidden(idx) or (MS.modelBoxHidden and MS.modelBoxHidden[idx])) then return true end
 	end
 	return false
 end
@@ -128,7 +132,7 @@ end
 local origObjSet = MS.objSet
 function MS.objSet(idx, f, v)
 	origObjSet(idx, f, v)
-	if ((f == "visible" or f == "color_a") and MS.isHidden(idx) and not MS.revealing) then
+	if ((f == "visible" or f == "color_a") and (MS.isHidden(idx) or (MS.modelBoxHidden and MS.modelBoxHidden[idx])) and not MS.revealing) then
 		MS.syncHidden(idx)
 	end
 end
