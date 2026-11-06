@@ -166,7 +166,7 @@ UI.TEXT_MIN = 0.85 -- text may shrink to this fraction of its role size before w
 
 ---BadaBoom is far larger per unit scale than font 4, so it has its own (smaller) role sizes
 ---(these match the pre-unification header looks: bars 0.5, pane headings/dock title 0.5, dialog titles 0.65).
-UI.TITLE_TEXT = { small = 0.42, body = 0.42, heading = 0.5, title = 0.65 }
+UI.TITLE_TEXT = { small = 0.34, body = 0.36, heading = 0.4, title = 0.55 }
 UI.TITLE_MIN = 0.65 -- headings in the big font may shrink to this fraction before truncating
 UI.WORD_MIN = 0.7 -- single words (tabs, short buttons) may shrink to this fraction before truncating
 
