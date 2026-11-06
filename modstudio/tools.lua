@@ -1197,6 +1197,11 @@ function MS.checkMod()
 	add("info", "fully see-through (colour alpha 0) but still solid", clear)
 	add("info", "invisible (still solid - fine for invisible walls)", invisible)
 
+	-- 3D model files and textures (models.lua)
+	if (MS.assetIssues) then
+		for _, it in ipairs(MS.assetIssues(false)) do table.insert(issues, it) end
+	end
+
 	-- Object budget
 	local limit = MS.settings.objLimit or 0
 	local n = #all
@@ -1225,6 +1230,7 @@ end
 
 ---Export, but first show any warnings from the check
 function MS.exportChecked(name)
+	if (MS.assetReport) then pcall(MS.assetReport, true) end
 	local warns = 0
 	for _, it in ipairs(MS.checkMod()) do
 		if (it.severity == "warn") then warns = warns + 1 end

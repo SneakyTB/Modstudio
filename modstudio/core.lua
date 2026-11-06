@@ -134,7 +134,8 @@ MS.DEFAULT_SETTINGS = {
 	rotStep = 15,
 	scaleStep = 0.05,
 	showGrid = true,
-	gridExtent = 16,
+	gridExtent = 50,
+	gridFix = 0,            -- settings migrations done for the grid
 	showLabels = false,
 	showLinks = true,
 	gizmoSize = 95,
@@ -148,8 +149,11 @@ MS.DEFAULT_SETTINGS = {
 	camMethodOk = true,     -- true once camMethod is known to move the camera (hook confirmed in game)
 	camFix = 0,             -- settings migration marker for the camera method
 	objLimit = 0,           -- max env objects the game allows (0 = not measured yet)
-	surfaceSnap = true,     -- dragged objects rest on the surface under the cursor
+	surfaceSnap = true,     -- unused: object drags now hold the object at a fixed camera distance
 	showDojo = true,        -- draw the dojo outline on the floor
+	modelPreview = true,    -- draw each object's 3D model (use_model) in the editor
+	modelDepth = 2,         -- folders between data/mod_assets and the exported mod: 2 = modmaker/<name>, 1 = data/mod/<name>
+	assetNote = false,      -- add "This mod needs these assets" to the welcome message on export
 	symmetry = false,       -- mirror body/joint edits to the other side
 	bodyGizmo = true,
 	moveChildren = true,    -- moving a parent moves its children
@@ -158,6 +162,8 @@ MS.DEFAULT_SETTINGS = {
 	scrollPush = true,      -- wheel pushes a click-dragged object along the view line (off: wheel zooms)
 	altDuplicate = true,    -- Alt + gizmo drag drags out a copy
 	layout = {},            -- moved / resized panels: side -> { x, y, w, h }
+	dockSizes = {},         -- dragged panel sizes: left / right width, bottom height
+	dockState = nil,        -- which tabs are open: side -> { active, open }
 	uiScale = 1,            -- 0.85 / 1 / 1.15 / 1.3
 	accent = "pink",        -- highlight color (see UI.ACCENTS)
 	accentCustom = { 0.9, 0.62, 0.62 },
@@ -198,6 +204,11 @@ function MS.loadSettings()
 	if ((tonumber(MS.settings.camFix) or 0) < 4) then
 		MS.settings.scrollPush = true
 		MS.settings.camFix = 4
+	end
+	-- The grid used to default to 16: move anyone still on the old default to the bigger grid
+	if ((tonumber(MS.settings.gridFix) or 0) < 1) then
+		if ((tonumber(MS.settings.gridExtent) or 16) == 16) then MS.settings.gridExtent = 50 end
+		MS.settings.gridFix = 1
 	end
 end
 
@@ -1190,11 +1201,23 @@ function MS.restore(s, forceRecreate)
 		end
 	end
 
+	local posBefore, rotBefore = MS.getRule("engageplayerpos"), MS.getRule("engageplayerrot")
 	MS.applyRules(s.rules)
+	for _, rn in ipairs({ "engageplayerpos", "engageplayerrot" }) do
+		-- setRule also tracks values the engine doesn't echo back
+		local want = s.rules and s.rules[rn]
+		if (want ~= nil and tostring(want) ~= tostring(MS.getRule(rn))) then MS.setRule(rn, want) end
+	end
 	if (MS.hierFix) then MS.hierFix() end
 
 	MS.markDirty()
 	MS.selClear()
+	-- Per-player start rules only take effect on a new match (undo / redo of a player move or turn)
+	if (s.rules and (tostring(MS.getRule("engageplayerpos")) ~= tostring(posBefore)
+		or tostring(MS.getRule("engageplayerrot")) ~= tostring(rotBefore))) then
+		MS.faceFix = nil
+		MS.restartMatch()
+	end
 end
 
 ---The game's mod maker can drop its objects on its own (seen when moving Tori's
@@ -2425,14 +2448,29 @@ function MS.applyRules(rules)
 	end
 end
 
+---Rules we set that the engine doesn't report back yet (some only take effect on a
+---new game): the value we set wins until the engine's own value changes
+MS.ruleShadow = MS.ruleShadow or {}
+
 function MS.getRule(name)
 	local ok, v = pcall(get_gamerule, name)
+	local sh = MS.ruleShadow[name]
+	if (sh) then
+		if (ok and tostring(v) == sh.eng) then return sh.v end
+		MS.ruleShadow[name] = nil
+	end
 	if (ok) then return v end
 	return nil
 end
 
 function MS.setRule(name, value)
 	pcall(set_gamerule, name, tostring(value))
+	local ok, back = pcall(get_gamerule, name)
+	if (ok and tostring(back) ~= tostring(value)) then
+		MS.ruleShadow[name] = { v = tostring(value), eng = tostring(back) }
+	else
+		MS.ruleShadow[name] = nil
+	end
 	MS.changed = true
 	MS.changedSinceAutosave = true
 end
@@ -2446,6 +2484,279 @@ function MS.restartMatch()
 		pcall(start_new_game)
 	end
 	MS.toast("Match restarted with the new rules")
+end
+
+---------------------------------------------------------------------------
+-- Turning a whole player around with the game's per-player start rules
+-- (engageplayerpos / engageplayerrot: "x,y,z" for each player, world units / degrees).
+-- The engine rotates the player as one piece, so no body part or joint is rewritten.
+-- Those rules replace engagedistance / height / rotation, and their exact origin and
+-- rotation sign can't be read from the API, so the result is measured after the
+-- restart and corrected (rotation first, then position) until the player is where
+-- and how it should be.
+---------------------------------------------------------------------------
+
+MS.faceFlipped = MS.faceFlipped or {}
+
+local function parseTriples(str, n)
+	local out = {}
+	for num in tostring(str or ""):gmatch("[%-%+]?[%d%.]+e?[%-%+]?%d*") do
+		local v = tonumber(num)
+		if (v) then out[#out + 1] = v end
+	end
+	if (#out < 3 * n) then return nil end
+	local any = false
+	for _, v in ipairs(out) do if (v ~= 0) then any = true end end
+	if (not any) then return nil end
+	local t = {}
+	for i = 1, n do t[i] = { out[3 * i - 2], out[3 * i - 1], out[3 * i] } end
+	return t
+end
+
+local function joinTriples(t)
+	local parts = {}
+	for _, v in ipairs(t) do parts[#parts + 1] = string.format("%.3f,%.3f,%.3f", v[1], v[2], v[3]) end
+	return table.concat(parts, ",")
+end
+
+local function yawOf(p)
+	local wr, wl = MS.bodyWorld(p, 5), MS.bodyWorld(p, 8)
+	if (not wr or not wl) then return nil end
+	return math.deg(math.atan2(wl.pos[2] - wr.pos[2], wl.pos[1] - wr.pos[1]))
+end
+
+local function angDiff(a, b)
+	local d = (a - b) % 360
+	if (d > 180) then d = d - 360 end
+	return d
+end
+
+local function applyFace(f)
+	MS.setRule("engageplayerpos", joinTriples(f.pos))
+	MS.setRule("engageplayerrot", joinTriples(f.rot))
+	MS.restartMatch()
+	f.wait = 12
+end
+
+---The per-player start rules as lists of {x,y,z} (index 1 = Tori). When they aren't custom
+---yet they are initialised from where each player is drawn now (c0 = world centres,
+---yaw0 = facing), the same way for every player.
+function MS.startRules(n, c0, yaw0)
+	local V = MS.V
+	local pos = parseTriples(MS.getRule("engageplayerpos"), n)
+	local rot = pos and parseTriples(MS.getRule("engageplayerrot"), n) or nil
+	if (not pos) then
+		-- Not custom yet: start from where each player is drawn now
+		pos, rot = {}, {}
+		for i = 0, n - 1 do
+			local W = MS.playerFrame(i)
+			local mc = MS.playerModCenter(i) or { 0, 0, 0 }
+			local o = V.sub(c0[i], MS.M.apply(W, mc))
+			pos[i + 1] = o
+			-- Yaw the mod coordinates are turned by (assumes the engine's +z turns the same way)
+			local wr, wl = MS.bodies[i] and MS.bodies[i][5], MS.bodies[i] and MS.bodies[i][8]
+			local ym = (wr and wl) and math.deg(math.atan2(wl.pos_y - wr.pos_y, wl.pos_x - wr.pos_x)) or 0
+			rot[i + 1] = { 0, 0, angDiff(yaw0[i], ym) }
+		end
+	end
+	rot = rot or {}
+	for i = 1, n do rot[i] = rot[i] or { 0, 0, 0 } end
+	return pos, rot
+end
+
+---Starts turning player p around (press again to turn back)
+function MS.faceToggle(p)
+	local n = math.max(2, MS.numPlayers or 2)
+	local V = MS.V
+	local f = { p = p, n = n, c0 = {}, yaw0 = {}, tries = 0 }
+	for i = 0, n - 1 do
+		f.c0[i] = MS.playerWorldCenter(i)
+		f.yaw0[i] = yawOf(i)
+		if (not f.c0[i] or not f.yaw0[i]) then
+			MS.toast("Can't read where the players are right now")
+			return false
+		end
+	end
+	local pos, rot = MS.startRules(n, f.c0, f.yaw0)
+	f.pos, f.rot = pos, rot
+	f.rotBase = {}
+	for i = 1, n do f.rotBase[i] = rot[i][3] end
+	-- Expected result: everybody where and how they were, the chosen player turned 180
+	f.want = {}
+	for i = 0, n - 1 do f.want[i] = f.yaw0[i] + (i == p and 180 or 0) end
+	rot[p + 1][3] = rot[p + 1][3] + 180
+	f.rotBase[p + 1] = rot[p + 1][3]
+	MS.pushUndo("Face the other way")
+	MS.faceFlipped[p] = not MS.faceFlipped[p]
+	MS.faceFix = f
+	applyFace(f)
+	return true
+end
+
+---Moves one whole player by world offset d by changing ONLY that player's entry in
+---engageplayerpos (everybody else's values and engageplayerrot stay), then restarts the
+---match and lets tickFace measure / correct the result. opts.previewed: the player is
+---currently drawn already shifted by d (drag preview). opts.label: undo step name.
+function MS.movePlayerBy(p, d, opts)
+	opts = opts or {}
+	local n = math.max(2, MS.numPlayers or 2)
+	local V = MS.V
+	local f = { p = p, n = n, c0 = {}, yaw0 = {}, tries = 0, want = {} }
+	for i = 0, n - 1 do
+		f.c0[i] = MS.playerWorldCenter(i)
+		f.yaw0[i] = yawOf(i)
+		if (not f.c0[i] or not f.yaw0[i]) then
+			MS.toast("Can't read where the players are right now")
+			return false
+		end
+		f.want[i] = f.yaw0[i]
+	end
+	-- Where p was before the move (the rules describe the match start, not the preview)
+	if (opts.previewed) then f.c0[p] = V.sub(f.c0[p], d) end
+	local pos, rot = MS.startRules(n, f.c0, f.yaw0)
+	if (opts.label) then MS.pushUndo(opts.label) end
+	pos[p + 1] = V.add(pos[p + 1], d)
+	f.c0[p] = V.add(f.c0[p], d)
+	f.pos, f.rot = pos, rot
+	MS.faceFix = f
+	applyFace(f)
+	return true
+end
+
+---True when the per-player start rules hold custom positions
+function MS.hasCustomPlacement()
+	local n = math.max(2, MS.numPlayers or 2)
+	return parseTriples(MS.getRule("engageplayerpos"), n) ~= nil
+end
+
+---Back to the game's own placement (engagedistance / engageheight / engagerotation, default
+---facing): both per-player rules are unset ("0" = off, which is what the game's own rule editor
+---writes), the turned-around flags are forgotten. restart: start a new match so it shows.
+function MS.clearPlacement(restart)
+	local n = math.max(2, MS.numPlayers or 2)
+	local z = {}
+	for i = 1, n do z[i] = "0,0,0" end
+	MS.faceFix = nil
+	MS.faceFlipped = {}
+	MS.setRule("engageplayerpos", "0")
+	MS.setRule("engageplayerrot", table.concat(z, ","))
+	if (restart) then MS.restartMatch() end
+end
+
+---Where every player is drawn now: centres and yaws, or nil if they can't be read
+function MS.measurePlayers()
+	local n = math.max(2, MS.numPlayers or 2)
+	local m = { c = {}, yaw = {} }
+	for i = 0, n - 1 do
+		m.c[i] = MS.playerWorldCenter(i)
+		m.yaw[i] = yawOf(i)
+		if (not m.c[i] or not m.yaw[i]) then return nil end
+	end
+	return m
+end
+
+---Puts only player p back at the game's default place / facing while the other players keep
+---their custom start position and rotation. prior = MS.measurePlayers() from before the
+---reset. Step A: remember the rules, clear them, restart. Step B (tickFace, phaseA): measure
+---the defaults, rebuild the rules from them (p = default, the others = remembered), restart
+---and let the normal measure-and-correct loop line everybody up.
+function MS.resetPlayerPlacement(p, prior, doneMsg)
+	local n = math.max(2, MS.numPlayers or 2)
+	local savedPos = parseTriples(MS.getRule("engageplayerpos"), n)
+	if (not savedPos or not prior) then
+		MS.clearPlacement(true)
+		return
+	end
+	local savedRot = parseTriples(MS.getRule("engageplayerrot"), n) or {}
+	for i = 1, n do savedRot[i] = savedRot[i] or { 0, 0, 0 } end
+	local f = {
+		p = p, n = n, c0 = {}, yaw0 = {}, want = {}, tries = 0, phaseA = true,
+		savedPos = savedPos, savedRot = savedRot, prior = prior,
+		doneMsg = doneMsg, failMsg = "Reset, but couldn't line the players up exactly - check the start position"
+	}
+	local z = {}
+	for i = 1, n do z[i] = "0,0,0" end
+	MS.faceFlipped[p] = nil
+	MS.setRule("engageplayerpos", "0")
+	MS.setRule("engageplayerrot", table.concat(z, ","))
+	MS.faceFix = f
+	MS.restartMatch()
+	f.wait = 12
+end
+
+---Per frame: once the restarted match has settled, check the result and correct it
+function MS.tickFace()
+	local f = MS.faceFix
+	if (not f) then return end
+	if (f.wait > 0) then f.wait = f.wait - 1; return end
+	if (MS.needRefresh) then return end
+	if (f.phaseA) then
+		-- The match now starts with no custom rules: these are the default places
+		local c, y = {}, {}
+		for i = 0, f.n - 1 do
+			c[i], y[i] = MS.playerWorldCenter(i), yawOf(i)
+			if (not c[i] or not y[i]) then f.wait = 5; return end
+		end
+		local pos, rot = MS.startRules(f.n, c, y)
+		for i = 0, f.n - 1 do
+			if (i == f.p) then
+				f.c0[i], f.want[i] = c[i], y[i]
+			else
+				pos[i + 1], rot[i + 1] = f.savedPos[i + 1], f.savedRot[i + 1]
+				f.c0[i], f.want[i] = f.prior.c[i], f.prior.yaw[i]
+			end
+		end
+		f.pos, f.rot = pos, rot
+		f.phaseA = nil
+		f.tries = 0
+		applyFace(f)
+		return
+	end
+	local worst, errs, perr = 0, {}, {}
+	for i = 0, f.n - 1 do
+		local c, y = MS.playerWorldCenter(i), yawOf(i)
+		if (not c or not y) then f.wait = 5; return end
+		errs[i] = angDiff(y, f.want[i])
+		perr[i] = MS.V.sub(c, f.c0[i])
+		worst = math.max(worst, math.abs(errs[i]))
+	end
+	local posBad = false
+	for i = 0, f.n - 1 do
+		if (MS.V.len({ perr[i][1], perr[i][2], perr[i][3] }) > 0.05) then posBad = true end
+	end
+	if (worst <= 3 and not posBad) then
+		MS.faceFix = nil
+		MS.toast(f.doneMsg or "Turned around")
+		return
+	end
+	f.tries = f.tries + 1
+	if (f.tries > 6) then
+		MS.faceFix = nil
+		MS.toast(f.failMsg or "Turned, but couldn't line the player up exactly - check the start position")
+		return
+	end
+	if (worst > 3) then
+		-- Rotation first. Try the error with the assumed sign, then the opposite sign.
+		for i = 0, f.n - 1 do
+			if (math.abs(errs[i]) > 3) then
+				f.signTry = f.signTry or {}
+				local last = f.signTry[i]
+				if (last and math.abs(errs[i]) > math.abs(last.err) * 0.5) then
+					-- That direction didn't help: go the other way from the original value
+					f.rot[i + 1][3] = last.base + last.err * (last.dir == -1 and 1 or -1)
+					f.signTry[i] = { base = last.base, err = last.err, dir = -last.dir }
+				else
+					f.signTry[i] = { base = f.rot[i + 1][3], err = errs[i], dir = -1 }
+					f.rot[i + 1][3] = f.rot[i + 1][3] - errs[i]
+				end
+			end
+		end
+	else
+		for i = 0, f.n - 1 do
+			f.pos[i + 1] = MS.V.sub(f.pos[i + 1], perr[i])
+		end
+	end
+	applyFace(f)
 end
 
 ---------------------------------------------------------------------------
@@ -2538,13 +2849,19 @@ end
 function MS.exportMod(name)
 	name = MS.safeName(name)
 	MS.flush(true)
+	if (MS.settings.assetNote and MS.appendAssetNote and MS.assetReport) then
+		local rep = MS.assetReport(true)
+		if (#rep.order > 0) then pcall(MS.appendAssetNote, "list") end
+	end
 	local ok, written = pcall(export_mod_maker, name)
 	if (ok and written) then
 		MS.saveName = (tostring(written):gsub("^modmaker/", ""):gsub("%.tbm$", ""))
 		MS.changed = false
 		-- Keep a project file next to the export so names/triangles survive
 		MS.saveProject(MS.saveName, true)
-		MS.toast("Exported data/mod/" .. tostring(written) .. " - load it from the Mods menu")
+		MS.lastExport = tostring(written)
+		local extra = MS.afterExport and MS.afterExport(written) or ""
+		MS.toast("Exported data/mod/" .. tostring(written) .. " - load it from the Mods menu" .. (extra ~= "" and (" (" .. extra .. ")") or ""))
 		echo("Mod Studio: exported " .. tostring(written))
 		return written
 	end
@@ -2558,6 +2875,11 @@ function MS.importMod(name)
 	if (ok and res) then
 		MS.meta, MS.tris = {}, {}
 		MS.reloadAll()
+		-- Per-object models live only in the file (the mod maker API can't see them)
+		local nm = MS.readModelLines and MS.readModelLines(name) or 0
+		if (nm > 0) then
+			MS.toast("Imported " .. name .. " - " .. nm .. " object" .. (nm == 1 and "" or "s") .. " use 3D models")
+		end
 		MS.saveName = (name:gsub("^modmaker/", ""):gsub("%.tbm$", ""))
 		MS.markDirty()
 		MS.changed = false
@@ -2720,6 +3042,11 @@ local RESET_LABELS = {
 function MS.resetTo(what)
 	local label = RESET_LABELS[what] or "Reset"
 	local keep = MS.snapshot()
+	-- Whole-player placement lives in rules (engageplayerpos / engageplayerrot): note where
+	-- everybody is drawn now, so a single-player reset can leave the others exactly there
+	local hadPlacement = MS.hasCustomPlacement()
+	local prior = (type(what) == "number" and hadPlacement) and MS.measurePlayers() or nil
+	MS.faceFix = nil
 	local okm, msg = pcall(get_mod_message)
 	local oku, um = pcall(get_mod_use_model)
 	local okn, mn = pcall(get_mod_model_name)
@@ -2756,7 +3083,25 @@ function MS.resetTo(what)
 	end
 	MS.markDirty()
 	MS.selClear()
-	MS.toast(label .. " done - Ctrl+Z undoes it")
+	-- Default position + facing (the game's own placement when the start rules are unset)
+	local who = label:gsub("^Reset ", "")
+	local toastMsg = label .. " done - Ctrl+Z undoes it"
+	if (type(what) == "number") then
+		toastMsg = who .. " reset to the default position - Ctrl+Z undoes it"
+		if (hadPlacement) then
+			-- The others keep their custom place: async measure-and-correct, toast when settled
+			MS.resetPlayerPlacement(what, prior, who .. " reset to the default position")
+			toastMsg = nil
+		else
+			MS.faceFlipped[what] = nil
+		end
+	elseif (hadPlacement or MS.hasCustomPlacement()) then
+		MS.clearPlacement(true)
+		toastMsg = label .. " done (players back at the default position) - Ctrl+Z undoes it"
+	else
+		MS.clearPlacement(false)
+	end
+	if (toastMsg) then MS.toast(toastMsg) end
 	return true
 end
 
