@@ -183,9 +183,9 @@ function UI.textSize(role, font)
 	return best
 end
 
----Draw text in `el` at a role size, shrinking to fit. Floors: 85% of the role size (body text), 70% for
----single words, 65% for big-font headings. Never breaks inside a word; wraps only strings with spaces in
----boxes tall enough for two lines. Anything still too long is cut with "..." on a single line.
+---Draw text in `el` at exactly its role size (never shrunk, so same-role text always matches).
+---Never breaks inside a word; wraps only strings with spaces in boxes tall enough for two lines.
+---A one-line string that's too long first loses a trailing "(...)" note, then is cut with "...".
 function UI.addText(el, override, str, x, y, font, align, role)
 	local top = UI.textSize(role, font) * UI.textK
 	str = tostring(str or "")
@@ -209,12 +209,14 @@ function UI.addText(el, override, str, x, y, font, align, role)
 		if (not ok or not w) then return true end
 		return w * s <= avail
 	end
-	while (sc > low) do
-		if (fits(str, sc)) then break end
-		sc = sc - 0.02
+	-- Every piece of text of a role is drawn at exactly the role size (no shrink-to-fit), so
+	-- neighbours always match. Too long: drop a trailing "(...)" note, then cut with "...".
+	local _ = low
+	local tall = tallBox
+	if (not (hasSpace and tall) and not fits(str, sc)) then
+		local short = str:gsub("%s*%b()%s*$", "")
+		if (short ~= "" and short ~= str and fits(short, sc)) then str = short end
 	end
-	if (sc < low) then sc = low end
-	local tall = override or (el.size and el.size.h and el.size.h >= ROW * 1.6)
 	if (not (hasSpace and tall) and not fits(str, sc)) then
 		-- single line: trim characters until it fits, then add "..."
 		local t = str
