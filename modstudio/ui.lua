@@ -173,18 +173,59 @@ local function hint(parent, x, y, w, h, str, scale)
 end
 UI.hint = hint
 
----Button. o: active, disabled, tip, color, scale, align
+---Icons picked automatically from a button's label, so every panel gets them without repeating names.
+---Buttons that already pass icon = ... win; pass noAutoIcon = true to opt out (the top toolbar does).
+UI.LABEL_ICONS = {
+	["Triangle"] = "tri", ["Flat triangle"] = "tri", ["Ramp"] = "ramp", ["Ball"] = "sphere",
+	["Parent"] = "parent", ["Pick parent"] = "parent", ["Click parent"] = "parent", ["Pick parent..."] = "parent",
+	["Parent to last"] = "parent", ["Group to parent"] = "parent", ["Unparent"] = "unparent", ["Release children"] = "unparent",
+	["Fold all"] = "chevdown",
+	["Drop to floor"] = "floor", ["Snap to grid"] = "snap", ["Snap corners"] = "snap", ["Reset rotation"] = "undo",
+	["Reset rules"] = "undo", ["Reset this player"] = "undo", ["Reset everything"] = "undo", ["Recover autosave"] = "undo",
+	["Select group"] = "select", ["Select parent"] = "select", ["Select children"] = "select", ["Select branch"] = "select",
+	["Select both objects"] = "select", ["Select"] = "select", ["Pick in 3D..."] = "select",
+	["Delete branch"] = "trash", ["Delete link"] = "trash", ["Remove all objects"] = "trash", ["Remove all 360 joints"] = "trash",
+	["Lock"] = "lock", ["Copy color"] = "copy", ["Paste color"] = "copy", ["Copy to other player"] = "copy",
+	["Mirror to other side"] = "mirror", ["Mirror copy X"] = "mirror", ["Mirror copy Y"] = "mirror", ["Flip in place"] = "mirror",
+	["Export .tbm"] = "export", ["Import a mod..."] = "import", ["Save project"] = "save", ["Open project..."] = "folder",
+	["Restart match to try"] = "play", ["Look at players"] = "focus", ["Face the other way"] = "rotate",
+	["Floor"] = "slab", ["Wall"] = "wall", ["Pillar"] = "pillar", ["Platform"] = "platform",
+	["Arch"] = "arch", ["Quarter pipe"] = "qpipe", ["Tunnel"] = "tunnel", ["Curved wall"] = "curvedwall", ["Spiral stairs"] = "spiral",
+	["Align X"] = "align", ["Align Y"] = "align", ["Align Z"] = "align", ["Spread X"] = "spread", ["Spread Y"] = "spread", ["Spread Z"] = "spread",
+	["Grid on"] = "grid", ["Grid off"] = "grid", ["Scale whole player"] = "scale", ["Put at midpoint"] = "move",
+}
+
+---Button. o: active, disabled, tip, color, scale, align,
+---icon (name from icons.lua; with empty text the button is icon only, otherwise the icon sits left of the text),
+---iconDim (draw the icon faded, for an "off" state)
 local function button(parent, x, y, w, h, text, onClick, o)
 	o = o or {}
+	local bg = o.active and C.lightest or (o.color or C.dark)
 	local b = parent:addChild({
 		pos = { x, y }, size = { w, h },
 		shapeType = ROUNDED, rounded = UI.r(2),
 		interactive = not o.disabled,
-		bgColor = o.active and C.lightest or (o.color or C.dark),
+		bgColor = bg,
 		hoverColor = C.light, pressedColor = C.darkest,
 		inactiveColor = C.darkest
 	})
-	b:addAdaptedText(false, text, o.align == LEFTMID and 6 or nil, nil, 4, o.align or CENTERMID, (o.scale or 0.5) * UI.textK)
+	local hasText = text and text ~= ""
+	local icon = o.icon
+	if (not icon and hasText and not o.noAutoIcon) then icon = UI.LABEL_ICONS[text] end
+	if (icon and hasText) then
+		-- Icon + label only when both fit; otherwise the label wins (it says more)
+		local ok, tw = pcall(get_string_length, text, 4)
+		-- The label shrinks to fit beside the icon; only give up when it would get too small
+		if (ok and tw and (w - h - 4) < tw * (o.scale or 0.5) * UI.textK * 0.6) then icon = nil end
+	end
+	if (icon) then
+		UI.addIcon(b, icon, { bg = bg, disabled = o.disabled, dim = o.iconDim, box = hasText and { 2, 0, h, h } or nil })
+	end
+	if (hasText) then
+		local shift = o.align == LEFTMID and 6 or nil
+		if (icon) then shift = h + 2 end
+		b:addAdaptedText(false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), (o.scale or 0.5) * UI.textK)
+	end
 	if (onClick and not o.disabled) then
 		b:addMouseHandlers(nil, function() onClick() end)
 	end
@@ -200,7 +241,7 @@ local function buttonRow(parent, x, y, w, h, items)
 	local n = #items
 	local bw = (w - GAP * (n - 1)) / n
 	for i, it in ipairs(items) do
-		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled })
+		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled, icon = it.icon })
 	end
 end
 
@@ -289,12 +330,12 @@ local function numRow(holder, y, w, e)
 		local v = clampEntry(e, (e.get() or 0) + d * (e.step or 0.1))
 		e.set(v)
 	end
-	button(holder, lw, y, ROW, ROW, "-", function() nudge(-1) end, { tip = "Decrease (Shift: x10)" })
+	button(holder, lw, y, ROW, ROW, "", function() nudge(-1) end, { icon = "minus", tip = "Decrease (Shift: x10)" })
 	field(holder, lw + ROW + GAP, y, w - lw - ROW * 2 - GAP * 2, ROW, MS.fmt(e.get()), { numeric = true, live = e.get }, function(s)
 		local v = tonumber(s)
 		if (v) then e.set(clampEntry(e, v)) end
 	end)
-	button(holder, w - ROW, y, ROW, ROW, "+", function() nudge(1) end, { tip = "Increase (Shift: x10)" })
+	button(holder, w - ROW, y, ROW, ROW, "", function() nudge(1) end, { icon = "plus", tip = "Increase (Shift: x10)" })
 end
 
 ---label | X [  ] Y [  ] Z [  ]   (drag the letters to scrub)
@@ -548,6 +589,12 @@ function UI.endPointerDrag()
 	if (not d) then return false end
 	UI.pointerDrag = nil
 	pcall(enable_mouse_camera_movement)
+	if (d.kind == "edge" and d.value) then
+		MS.settings.dockSizes = MS.settings.dockSizes or {}
+		MS.settings.dockSizes[d.side] = d.value
+		MS.saveSettings()
+		UI.buildDocks()
+	end
 	if (d.kind == "layout" and d.rect) then
 		MS.settings.layout = MS.settings.layout or {}
 		MS.settings.layout[d.target] = { x = floor(d.rect[1]), y = floor(d.rect[2]), w = floor(d.rect[3]), h = floor(d.rect[4]) }
@@ -569,6 +616,15 @@ local function followPointerDrag()
 			UI.pages[d.key] = nv
 			UI.needRefresh = true
 		end
+		return
+	end
+	if (d.kind == "edge") then
+		local Lc = UI.layoutCalc
+		local m = UI.layoutMetrics()
+		d.value = Lc.dragSize(d.side, mx, my, m)
+		local lx, ly, lw, lh = Lc.edgeLine(d.side, d.value, m)
+		set_color(1, 0.85, 0.3, 0.9)
+		pcall(draw_quad, lx, ly, lw, lh)
 		return
 	end
 	-- layout: move or resize, drawn as an outline until you let go
@@ -598,7 +654,9 @@ local function layoutGrip(parent, x, y, w, h, text, target, mode, rectFn, tip)
 		bgColor = C.darkest, hoverColor = C.light, pressedColor = C.lightest,
 		shapeType = ROUNDED, rounded = UI.r(3)
 	})
-	g:addAdaptedText(false, text, nil, nil, 4, CENTERMID, 0.45)
+	if (text == "::") then UI.addIcon(g, "grip", { bg = C.darkest, dim = true })
+	elseif (text == "/") then UI.addIcon(g, "resize", { bg = C.darkest, dim = true })
+	else g:addAdaptedText(false, text, nil, nil, 4, CENTERMID, 0.45) end
 	g:addMouseHandlers(function()
 		UI.startPointerDrag({ kind = "layout", target = target, mode = mode, rect0 = rectFn() })
 	end, nil, function() UI.setTip(tip, g) end)
@@ -608,6 +666,7 @@ UI.layoutGrip = layoutGrip
 
 function UI.resetLayout()
 	MS.settings.layout = {}
+	MS.settings.dockSizes = {}
 	MS.saveSettings()
 	UI.close()
 	UI.open()
@@ -779,9 +838,9 @@ local function objTransformEntries()
 		{ "Reset rotation", MS.resetRotation }
 	} })
 	table.insert(entries, { kind = "buttons", items = {
-		{ "Duplicate", MS.duplicateSelected, tip = "Ctrl+D" },
-		{ "Focus camera", MS.focusSelection, tip = "F" },
-		{ "Delete", MS.deleteSelected, tip = "Delete key" }
+		{ "Duplicate", MS.duplicateSelected, icon = "copy", tip = "Ctrl+D" },
+		{ "Focus camera", MS.focusSelection, icon = "focus", tip = "F" },
+		{ "Delete", MS.deleteSelected, icon = "trash", tip = "Delete key" }
 	} })
 	return entries
 end
@@ -842,7 +901,7 @@ local function triEntries(id)
 		} },
 		{ kind = "buttons", items = {
 			{ "Duplicate", MS.duplicateSelected },
-			{ "Focus camera", MS.focusSelection },
+			{ "Focus camera", MS.focusSelection, icon = "focus" },
 			{ "Delete", MS.deleteSelected }
 		} }
 	}
@@ -1011,6 +1070,230 @@ local function objInfoEntries()
 end
 
 ---------------------------------------------------------------------------
+-- 3D model (per object) and asset tools
+---------------------------------------------------------------------------
+
+UI.modelFilter = UI.modelFilter or ""
+UI.modelPage = UI.modelPage or 1
+UI.assetLog = UI.assetLog or {}
+local MODEL_ROWS = 5
+
+---Objects that can carry a model: everything selected except triangle slices
+local function modelTargets()
+	local list = {}
+	for _, idx in ipairs(MS.selList()) do
+		local m = MS.meta[idx]
+		if (not (m and m.tri and MS.tris[m.tri])) then table.insert(list, idx) end
+	end
+	return list
+end
+
+local function applyModel(use, name, title, key)
+	local list = modelTargets()
+	if (#list == 0) then
+		MS.toast("Select an object first")
+		return
+	end
+	MS.pushUndo(title or "3D model", key)
+	MS.setObjModels(list, use, name)
+end
+
+local function modelStatus()
+	local use, name = MS.objModel(MS.primary)
+	if (name == "") then
+		return use and "Pick a model from the list, or type its path above." or "No model. Turn on \"Use a 3D model\", then pick a file."
+	end
+	local bad = MS.modelNameProblem(name)
+	if (bad) then return "(!) The path " .. bad end
+	local info = MS.objInfo(name)
+	if (info.missing) then return "(!) Not found: data/mod_assets/" .. name .. ".obj" end
+	local txt = {}
+	if (info.ext) then
+		table.insert(txt, "Model is " .. MS.fmt(info.ext[1]) .. " x " .. MS.fmt(info.ext[2]) .. " x " .. MS.fmt(info.ext[3]) .. " (x, y, z) at scale 1.")
+	end
+	if (info.textureMissing) then
+		table.insert(txt, "(!) A texture named by its .mtl is missing.")
+	elseif (info.hasTexture) then
+		table.insert(txt, "Texture found.")
+	elseif (info.hasUV) then
+		table.insert(txt, "(!) No texture (" .. name:match("([^/]*)$") .. ".tga) next to it.")
+	else
+		table.insert(txt, "No texture needed.")
+	end
+	local rel = MS.relativeModelName(name, MS.modBaseSegs(MS.lastExport))
+	table.insert(txt, "Written as model_name " .. rel)
+	return table.concat(txt, " ")
+end
+
+local function objModelEntries()
+	if (MS.selSingleTri()) then
+		return { { kind = "hint", rows = 2, label = "Triangles are built from many boxes, so they can't carry one model. Give a single box or ball a 3D model instead." } }
+	end
+	local entries = {
+		{ kind = "hint", rows = 3, scale = 0.42, label = "Gives the object a 3D model (.obj from data/mod_assets). The game draws it at the object's position and turns and stretches it with the object's rotation and size. The object's box is still its hitbox." },
+		{ kind = "toggle", label = "Use a 3D model", tip = "Writes use_model 1 and model_name into the exported mod. Players need the .obj (and its .tga texture) in data/mod_assets",
+			get = function() local u = MS.objModel(MS.primary); return u end,
+			set = function(v) applyModel(v, nil, "3D model on/off") end },
+		{ kind = "text", label = "Model", placeholder = "folder/name  (no .obj)",
+			get = function() local _, n = MS.objModel(MS.primary); return n end,
+			set = function(s)
+				local _, cur = MS.objModel(MS.primary)
+				if (MS.cleanModelName(s) == cur) then return end
+				applyModel(MS.cleanModelName(s) ~= "" and true or nil, s, "3D model path", "model:name")
+			end },
+		{ kind = "hint", rows = 3, scale = 0.42, label = modelStatus() }
+	}
+
+	-- Picker
+	local all = MS.scanModels(false)
+	local q = (UI.modelFilter or ""):lower()
+	local shown = {}
+	for _, n in ipairs(all) do
+		if (q == "" or n:lower():find(q, 1, true)) then table.insert(shown, n) end
+	end
+	local pages = math.max(1, math.ceil(#shown / MODEL_ROWS))
+	UI.modelPage = MS.clamp(UI.modelPage or 1, 1, pages)
+	local _, current = MS.objModel(MS.primary)
+
+	table.insert(entries, { kind = "custom", render = function(holder, y, w)
+		local bw = floor(w * 0.3)
+		label(holder, 4, y, w - bw * 2 - GAP, ROW, "Files in data/mod_assets (" .. #all .. ")", LEFTMID, 0.45)
+		button(holder, w - bw * 2 - GAP, y, bw, ROW, "Refresh", function()
+			MS.scanModels(true)
+			MS.objCache = {}
+			MS.assetCache = nil
+			MS.unloadModels()
+			UI.requestRefresh()
+			MS.toast("Looked for models again")
+		end, { icon = "undo", scale = 0.42, tip = "Look in data/mod_assets again (after adding files) and reload previews" })
+		button(holder, w - bw, y, bw, ROW, "Folder", function() MS.openAssetsFolder() end,
+			{ icon = "folder", scale = 0.42, tip = "Open Toribash/data/mod_assets in your file browser" })
+	end })
+	table.insert(entries, { kind = "custom", render = function(holder, y, w)
+		field(holder, 0, y, w, ROW, UI.modelFilter, { align = LEFTMID, placeholder = "Filter models, then Enter", enter = function() UI.blurFields() end }, function(s)
+			UI.modelFilter = s
+			UI.modelPage = 1
+			UI.filterDirty = true
+		end)
+	end })
+	if (#all == 0) then
+		table.insert(entries, { kind = "hint", rows = 2, scale = 0.42, label = "No .obj files found in data/mod_assets. Put models there (e.g. data/mod_assets/mymod/rock.obj + rock.tga), then press Refresh." })
+	elseif (#shown == 0) then
+		table.insert(entries, { kind = "hint", rows = 1, label = "No model matches the filter." })
+	end
+	for r = 1, MODEL_ROWS do
+		local n = shown[(UI.modelPage - 1) * MODEL_ROWS + r]
+		if (n) then
+			table.insert(entries, { kind = "custom", render = function(holder, y, w)
+				button(holder, 0, y, w, ROW, n, function()
+					applyModel(true, n, "Pick 3D model")
+					UI.requestRefresh()
+				end, { align = LEFTMID, scale = 0.45, active = n == current, noAutoIcon = true,
+					tip = "Use data/mod_assets/" .. n .. ".obj for the selection" })
+			end })
+		end
+	end
+	if (#shown > MODEL_ROWS) then
+		table.insert(entries, { kind = "buttons", items = {
+			{ "< Prev", function() UI.modelPage = math.max(1, UI.modelPage - 1); UI.requestRefresh() end, disabled = UI.modelPage <= 1 },
+			{ "Page " .. UI.modelPage .. " / " .. pages, function() end, disabled = true },
+			{ "Next >", function() UI.modelPage = math.min(pages, UI.modelPage + 1); UI.requestRefresh() end, disabled = UI.modelPage >= pages }
+		} })
+	end
+
+	-- Size
+	table.insert(entries, { kind = "header", label = "Model size and hitbox" })
+	table.insert(entries, { kind = "num", label = "Model scale", step = 0.1, min = 0.01,
+		tip = "The game stretches the model by the object's size on each axis. Scale 1 = the model's own size. Keeps the model's centre in place",
+		get = function() local o = prim(); return o and o.dims_x end,
+		set = function(v) MS.setModelScale(modelTargets(), v) end })
+	table.insert(entries, { kind = "buttons", items = {
+		{ "Original size", function()
+			local n = MS.setModelScale(modelTargets(), 1)
+			MS.toast(n > 0 and "Model drawn at its own size (object size 1 x 1 x 1)" or "Only box objects with a model can do this")
+			UI.requestRefresh()
+		end, tip = "Sets the object's size to 1 x 1 x 1, which draws the model at the size it was made. The object's own box becomes 1 x 1 x 1 too" },
+		{ "Fit hitbox to model", function()
+			local idx = MS.primary
+			if (idx and MS.modelAddHitbox(idx)) then UI.requestRefresh() end
+		end, tip = "Adds an invisible static box that exactly wraps the model as the game will draw it (reads the .obj vertices, follows the object's rotation and size). One undo step" }
+	} })
+	table.insert(entries, { kind = "hint", rows = 3, scale = 0.4,
+		label = "Why a separate box? The game scales the model by the object's size, so one box can't be both the model's scale and its hitbox. Models about 1 unit big (like cube.obj) need no extra box." })
+
+	-- Options
+	table.insert(entries, { kind = "header", label = "Preview and paths" })
+	table.insert(entries, { kind = "toggle", label = "Show models in the editor", tip = "Draws each model over its object. The game itself shows it when you test or play the exported mod",
+		get = function() return MS.settings.modelPreview end,
+		set = function(v) MS.settings.modelPreview = v; MS.saveSettings() end })
+	table.insert(entries, { kind = "choice", label = "Mod folder", tip = "model_name is relative to data/mod_assets/<mod path>/. Mod Studio exports to data/mod/modmaker/ (2 levels). Use 1 only if you move the .tbm into data/mod itself",
+		options = { { 2, "modmaker/ (2)" }, { 1, "data/mod (1)" } },
+		get = function() return MS.settings.modelDepth or 2 end,
+		set = function(v) MS.settings.modelDepth = v; MS.saveSettings(); MS.assetCache = nil end })
+	return entries
+end
+
+---Asset list, mod message note and asset pack (File tab)
+function UI.assetEntries()
+	local rep = MS.assetReport(false)
+	local entries = {}
+	local nModels = #rep.order
+	if (nModels == 0) then
+		table.insert(entries, { kind = "hint", rows = 2, scale = 0.42, label = "No object uses a 3D model. Select an object and use Properties > 3D model to give it one." })
+		return entries
+	end
+	local missing = #rep.missing
+	table.insert(entries, { kind = "hint", rows = 1, label = nModels .. " model" .. (nModels == 1 and "" or "s") .. ", " .. #rep.files .. " file" .. (#rep.files == 1 and "" or "s") .. " found" .. (missing > 0 and (", " .. missing .. " MISSING") or "") })
+	for i, name in ipairs(rep.order) do
+		if (i > 6) then
+			table.insert(entries, { kind = "hint", rows = 1, scale = 0.4, label = "+ " .. (nModels - 6) .. " more (see the asset list file)" })
+			break
+		end
+		local info = rep.infos[name]
+		local state = name == "" and "no model chosen" or (info and info.missing and "MISSING") or (info and info.textureMissing and "texture missing") or "ok"
+		table.insert(entries, { kind = "hint", rows = 1, scale = 0.4, label = (name == "" and "(empty)" or name) .. "  x" .. #rep.users[name] .. "  -  " .. state })
+	end
+	local canCopy = MS.canBinaryCopy()
+	table.insert(entries, { kind = "buttons", items = {
+		{ "Add asset list to message", function() MS.appendAssetNote("list"); UI.requestRefresh() end,
+			tip = "Adds \"This mod needs these assets: ...\" to the welcome message players see (replaces an earlier note)" },
+		{ "Add 'Download assets'", function() MS.appendAssetNote("download"); UI.requestRefresh() end,
+			tip = "Adds \"Download the mod's 3D assets\" to the welcome message (replaces an earlier note)" }
+	} })
+	table.insert(entries, { kind = "toggle", label = "Add the asset note when exporting", tip = "Every export puts \"This mod needs these assets: ...\" at the end of the welcome message",
+		get = function() return MS.settings.assetNote end,
+		set = function(v) MS.settings.assetNote = v; MS.saveSettings() end })
+	table.insert(entries, { kind = "buttons", items = {
+		{ "Write asset list", function()
+			if (not MS.lastExport) then MS.toast("Export the mod first - the list is saved next to it") return end
+			local path, err = MS.writeManifest(MS.lastExport)
+			MS.toast(path and ("Saved " .. path) or ("Couldn't save the list: " .. tostring(err)))
+		end, tip = "Writes data/mod/modmaker/<name>_assets.txt next to the exported mod, listing every file players need under data/mod_assets. Export also does this automatically" },
+		{ "Make asset pack", function()
+			local folder = MS.safeName(MS.saveName)
+			UI.confirm("Make asset pack?", "Copies every model file (obj, mtl, textures) into data/mod_assets/" .. folder .. "/ and points the objects at the copies, then exports again. " ..
+				"Files that already exist there are never overwritten. The folder must exist already: create it in your file browser first (scripts can't create folders).", {
+				{ "Copy files", function()
+					UI.assetLog = MS.makeAssetPack(folder)
+					if ((MS.lastPackMoved or 0) > 0) then MS.exportMod(MS.saveName) end
+					UI.requestRefresh()
+				end },
+				{ "Open mod_assets", function() MS.openAssetsFolder() end },
+				{ "Cancel" }
+			})
+		end, disabled = not canCopy, tip = canCopy and "Copy the model files into data/mod_assets/<mod name>/ so the mod's assets live in one folder you can zip and share" or "Copying files isn't available on this platform" }
+	} })
+	table.insert(entries, { kind = "hint", rows = 2, scale = 0.4, label = canCopy
+		and "Copying uses the game's binary file access (works here). Scripts can't create folders, so make data/mod_assets/<mod name>/ yourself first."
+		or "This platform can't copy files from a script: only the asset list is written." })
+	for i, line in ipairs(UI.assetLog or {}) do
+		if (i > 8) then break end
+		table.insert(entries, { kind = "hint", rows = 1, scale = 0.4, label = line })
+	end
+	return entries
+end
+
+---------------------------------------------------------------------------
 -- Tabs
 ---------------------------------------------------------------------------
 
@@ -1088,9 +1371,9 @@ function UI.tabScene(pane)
 	local w = pane.size.w - PAD * 2
 	local y = PAD
 	buttonRow(pane, PAD, y, w, ROW, {
-		{ "Box", function() MS.addPrimitive("box") end, tip = "Add a box where the camera is looking" },
-		{ "Sphere", function() MS.addPrimitive("sphere") end },
-		{ "Cylinder", function() MS.addPrimitive("cylinder") end }
+		{ "Box", function() MS.addPrimitive("box") end, icon = "box", tip = "Add a box where the camera is looking" },
+		{ "Sphere", function() MS.addPrimitive("sphere") end, icon = "sphere" },
+		{ "Cylinder", function() MS.addPrimitive("cylinder") end, icon = "cylinder" }
 	})
 	y = y + ROW + GAP
 	buttonRow(pane, PAD, y, w, ROW, {
@@ -1139,11 +1422,11 @@ function UI.tabScene(pane)
 				local x = indent
 				if (it.kids > 0) then
 					local folded = it.uid and UI.collapsed[it.uid]
-					button(holder, x, ry, 18, ROW, folded and "+" or "-", function()
+					button(holder, x, ry, 18, ROW, "", function()
 						local uid = MS.ensureUid(it.key)
 						UI.collapsed[uid] = not UI.collapsed[uid] or nil
 						UI.requestRefresh()
-					end, { tip = (folded and "Show " or "Hide ") .. "the " .. it.kids .. " child" .. (it.kids == 1 and "" or "ren"), scale = 0.5 })
+					end, { icon = folded and "chevright" or "chevdown", tip = (folded and "Show " or "Hide ") .. "the " .. it.kids .. " child" .. (it.kids == 1 and "" or "ren"), scale = 0.5 })
 				end
 				x = x + 18 + GAP
 				local nameText = "[" .. it.tag .. "] " .. it.name
@@ -1151,9 +1434,9 @@ function UI.tabScene(pane)
 				if (filtering and it.parentName) then nameText = nameText .. "  < " .. it.parentName end
 				local hidden = MS.isHidden and MS.isHidden(it.idx)
 				if (hidden) then nameText = nameText .. "  (hidden)" end
-				button(holder, rw - 56 - 44 - GAP, ry, 44, ROW, hidden and "Show" or "Hide", function()
+				button(holder, rw - 56 - 44 - GAP, ry, 44, ROW, "", function()
 					MS.setNodesHidden({ it.key }, not hidden, true)
-				end, { active = hidden, tip = "Hide in the editor only (Ctrl+H). Hidden objects still export and play normally", scale = 0.42 })
+				end, { icon = hidden and "eyeoff" or "eye", active = hidden, tip = "Hide in the editor only (Ctrl+H). Hidden objects still export and play normally", scale = 0.42 })
 				button(holder, x, ry, rw - 56 - 44 - GAP * 2 - x, ROW, nameText, function()
 					local now = MS.clock()
 					local last = UI.lastRowClick
@@ -1172,15 +1455,15 @@ function UI.tabScene(pane)
 					end
 				end, { active = selected, align = LEFTMID, scale = 0.45,
 					tip = UI.parentPick and "Click to make this the parent of the selection" or
-						"Click to select, Shift+click to add, double-click (or F2) to rename. Indented rows are children of the row above" })
-				button(holder, rw - 56, ry, 56, ROW, m.locked and "Locked" or "Lock", function()
+						"Click to select, Shift+click to add, double-click (or Ctrl+R) to rename. Indented rows are children of the row above" })
+				button(holder, rw - 56, ry, 56, ROW, "", function()
 					local targets = it.tri and MS.tris[it.tri].objs or { it.idx }
 					for _, i in ipairs(targets) do
 						MS.meta[i] = MS.meta[i] or {}
 						MS.meta[i].locked = not m.locked or nil
 					end
 					UI.requestRefresh()
-				end, { active = m.locked, tip = "Locked objects can't be clicked in the 3D view", scale = 0.42 })
+				end, { icon = m.locked and "lock" or "unlock", active = m.locked, tip = "Locked objects can't be clicked in the 3D view", scale = 0.42 })
 			end })
 		end
 		UI.paged(pane, y, listH, entries, "outliner")
@@ -1201,7 +1484,7 @@ function UI.tabProperties(pane)
 	local rbw = math.min(70, floor(w * 0.25))
 	label(pane, PAD, y, w - rbw - GAP, ROW, title, LEFTMID, 0.55, UI.TITLE_FONT)
 	button(pane, PAD + w - rbw, y, rbw, ROW, "Rename", function() UI.renameNodes() end,
-		{ scale = 0.45, tip = "Give the selection a name (F2). Several at once become Name 1, Name 2..." })
+		{ icon = "pencil", scale = 0.45, tip = "Give the selection a name (Ctrl+R). Several at once become Name 1, Name 2..." })
 	y = y + ROW + GAP
 	local dist = MS.selectionDistance()
 	if (dist) then
@@ -1222,6 +1505,7 @@ function UI.tabProperties(pane)
 	local entries = UI.sections({
 		{ "obj:transform", triId and "Triangle" or "Transform", function() return triId and triEntries(triId) or objTransformEntries() end },
 		{ "obj:look", "Look", function() return withProps("look", objLookEntries()) end },
+		{ "obj:model", "3D model", objModelEntries },
 		{ "obj:physics", "Physics", function() return withProps("physics", objPhysicsEntries()) end },
 		{ "obj:thrust", "Thrust", function() return withProps("thrust", objThrustEntries()) end },
 		{ "obj:trigger", "Trigger", function() return withProps("trigger", objTriggerEntries()) end },
@@ -1585,32 +1869,19 @@ function UI.tabPlayers(pane)
 			{ kind = "toggle", label = "Gizmo moves the whole player", tip = "Turn on to move / turn the whole player and show the dojo resize dot",
 				get = function() return UI.sub.players == "place" end,
 				set = function(v) UI.sub.players = v and "place" or "transform"; UI.requestRefresh() end },
-			{ kind = "hint", rows = 2, scale = 0.44, label = "With that on, the gizmo moves/turns the whole " .. (PLAYER_NAMES[p] or "player") ..
-				". Pick the other player at the top. Drag the yellow dot to resize the dojo." },
+			{ kind = "hint", rows = 3, scale = 0.44, label = "With that on, the gizmo moves/turns the whole " .. (PLAYER_NAMES[p] or "player") ..
+				". Pick the other player at the top. Only this player moves (its start position); use Face the other way to turn. Drag the yellow dot to resize the dojo." },
 			{ kind = "buttons", items = {
-				{ "Face the other way", function()
-					MS.pushUndo("Turn player")
-					local Q = M.axisAngle({ 0, 0, 1 }, 180)
-					local c = MS.playerModCenter(p)
-					for b = 0, MS.NUM_BODIES - 1 do
-						local o = MS.bodies[p][b]
-						local np = V.add(c, M.apply(Q, V.sub({ o.pos_x, o.pos_y, o.pos_z }, c)))
-						MS.bodySet(p, b, "pos_x", np[1]); MS.bodySet(p, b, "pos_y", np[2]); MS.bodySet(p, b, "pos_z", np[3])
-						local x, yy, z = M.toEuler(M.mul(Q, M.fromEuler(o.rot_x, o.rot_y, o.rot_z)))
-						MS.bodySet(p, b, "rot_x", x); MS.bodySet(p, b, "rot_y", yy); MS.bodySet(p, b, "rot_z", z)
-					end
-					for j = 0, MS.NUM_JOINTS - 1 do
-						local o = MS.joints[p] and MS.joints[p][j]
-						if (o) then
-							local np = V.add(c, M.apply(Q, V.sub({ o.pos_x, o.pos_y, o.pos_z }, c)))
-							MS.jointSet(p, j, "pos_x", np[1]); MS.jointSet(p, j, "pos_y", np[2]); MS.jointSet(p, j, "pos_z", np[3])
-							local ax = M.apply(Q, { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 })
-							MS.jointSet(p, j, "axis_x", ax[1]); MS.jointSet(p, j, "axis_y", ax[2]); MS.jointSet(p, j, "axis_z", ax[3])
-						end
-					end
-					MS.toast("Turned " .. (PLAYER_NAMES[p] or "player") .. " around")
+				{ (MS.faceFlipped and MS.faceFlipped[p]) and "Face back" or "Face the other way", function()
+					-- Turns the whole player with the start-rotation rules (press again to turn back)
+					MS.faceToggle(p)
+					UI.requestRefresh()
 				end },
-				{ "Reset this player", function() MS.resetTo(p); UI.requestRefresh() end }
+				{ "Reset this player", function()
+					-- Body, joints, start position and facing all go back to the default
+					MS.resetTo(p)
+					UI.requestRefresh()
+				end }
 			} },
 			{ kind = "header", label = "Start spacing (applied when a match starts)" },
 			rule("Engage distance", "engagedistance", 5, "How far apart the players start"),
@@ -1627,7 +1898,31 @@ function UI.tabPlayers(pane)
 					MS.setRule("dojotype", v)
 					if (r) then MS.setDojoFromRadius(r) end
 				end },
-			rule("Dojo size", "dojosize", 25, "0 = no dojo. Square: full width. Round: radius (hundredths of a unit)"),
+			{ kind = "num", label = "Dojo size", step = 25, int = true, tip = "0 = no dojo. Square: full width. Round: radius (hundredths of a unit). Typical: 450 - 1100",
+				get = function() return tonumber(MS.getRule("dojosize")) or 0 end,
+				set = function(v)
+					MS.pushUndo("Dojo size", "rule:dojosize")
+					v = floor(v)
+					-- First step up from "no dojo": jump to a real arena size, not a 25cm box
+					if (v > 0 and v < 100 and (tonumber(MS.getRule("dojosize")) or 0) == 0) then v = 450 end
+					MS.setRule("dojosize", math.max(0, v))
+					if (v > 0) then MS.settings.showDojo = true end
+				end },
+			{ kind = "buttons", items = {
+				{ "Add a dojo", function()
+					MS.pushUndo("Add dojo")
+					if ((tonumber(MS.getRule("dojosize")) or 0) <= 0) then MS.setRule("dojosize", 600) end
+					MS.settings.showDojo = true
+					MS.saveSettings()
+					MS.toast("Dojo added - yellow outline on the floor. Restart match to see the game's own dojo")
+					UI.requestRefresh()
+				end },
+				{ "Remove dojo", function()
+					MS.pushUndo("Remove dojo")
+					MS.setRule("dojosize", 0)
+					UI.requestRefresh()
+				end }
+			} },
 			{ kind = "toggle", label = "Always show the dojo outline", get = function() return MS.settings.showDojo end,
 				set = function(v) MS.settings.showDojo = v; MS.saveSettings() end }
 		}
@@ -1708,7 +2003,7 @@ function UI.tabPlayers(pane)
 			table.insert(entries, vec("Alt size", "altsides", 0.05, "Alternate size used by some game modes"))
 		end
 		table.insert(entries, { kind = "buttons", items = {
-			{ "Focus camera", MS.focusSelection },
+			{ "Focus camera", MS.focusSelection, icon = "focus" },
 			{ "Mirror to other side", function() MS.pushUndo("Mirror part"); MS.mirrorBody(p, b) end, disabled = not MS.BODY_MIRROR[b] }
 		} })
 	end
@@ -1841,7 +2136,7 @@ function UI.tabJoints(pane)
 			num("Strength", "maxforce", 10, { min = 0, tip = "Higher = stronger joint" }),
 			num("Max speed", "maxvelocity", 1, { min = 0, tip = "How fast it can move" }),
 			{ kind = "buttons", items = {
-				{ "Focus camera", MS.focusSelection },
+				{ "Focus camera", MS.focusSelection, icon = "focus" },
 				{ "Mirror to other side", function() MS.pushUndo("Mirror joint"); MS.mirrorJoint(p, j) end, disabled = not MS.JOINT_MIRROR[j] }
 			} }
 		}
@@ -1976,7 +2271,7 @@ function UI.tabWorld(pane)
 			{ "Side", function() MS.viewFrom("side") end }, { "3/4", function() MS.viewFrom("iso") end }
 		} },
 		{ kind = "buttons", items = {
-			{ "Focus selection (F)", MS.focusSelection },
+			{ "Focus selection (F)", MS.focusSelection, icon = "focus" },
 			{ "Look at players", function() MS.cameraTo({ 0, 0, 1 }, nil, 6, nil, true) end }
 		} },
 		{ kind = "header", label = "Overview" },
@@ -2038,7 +2333,7 @@ function UI.tabFile(pane)
 					{ "Recover", function() MS.loadProject("_autosave"); UI.requestRefresh() end }, { "Cancel" }
 				})
 			end, tip = "Loads the last automatic backup" },
-			{ "Test mod", UI.enterTest, tip = "Play your mod, then come back to keep editing" }
+			{ "Test mod", UI.enterTest, icon = "play", tip = "Play your mod, then come back to keep editing" }
 		} },
 		{ kind = "header", label = "Autosave" },
 		{ kind = "toggle", label = "Autosave while I work", tip = "Backs up to the \"_autosave\" project, which \"Recover autosave\" loads",
@@ -2055,6 +2350,17 @@ function UI.tabFile(pane)
 			set = function(v) MS.settings.autosaveMinutes = v; MS.saveSettings() end },
 		{ kind = "header", label = "Start from a template (objects + rules)" }
 	}
+	do
+		-- 3D model assets (list, welcome-message note, asset pack) sit above Autosave
+		local at
+		for i, e in ipairs(entries) do
+			if (e.kind == "header" and e.label == "Autosave") then at = i break end
+		end
+		if (at) then
+			table.insert(entries, at, { kind = "header", label = "3D model assets" })
+			for k, e in ipairs(UI.assetEntries()) do table.insert(entries, at + k, e) end
+		end
+	end
 	for _, t in ipairs(MS.TEMPLATES) do
 		local tt = t
 		table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
@@ -2120,7 +2426,7 @@ function UI.tabConsole(pane)
 	end
 	field(pane, PAD, y, w - 60, ROW, UI.consoleCmd, { align = LEFTMID, placeholder = "Type a game command (without /)", enter = function() run() end },
 		function(s) UI.consoleCmd = s end)
-	button(pane, PAD + w - 56, y, 56, ROW, "Run", run)
+	button(pane, PAD + w - 56, y, 56, ROW, "Run", run, { icon = "play" })
 	y = y + ROW + GAP * 3
 	if (#UI.consoleHistory == 0) then
 		hint(pane, PAD, y, w, 60, "Commands you run show up here. Click one to put it back in the box.", 0.5)
@@ -2444,11 +2750,11 @@ function UI.tabLibrary(pane)
 				MS.placePrefab(name)
 			end, { align = LEFTMID, scale = 0.45, tip = "Adds it where the camera is looking" })
 			if (not builtin) then
-				button(holder, rw - delW, ry, delW, ROW, "Delete", function()
+				button(holder, rw - delW, ry, delW, ROW, "", function()
 					UI.confirm("Delete prefab?", "Removes \"" .. name .. "\" from your library. Objects already placed stay.", {
 						{ "Delete", function() MS.deletePrefabFile(name); UI.requestRefresh() end }, { "Cancel" }
 					})
-				end, { scale = 0.42 })
+				end, { icon = "trash", scale = 0.42, tip = "Delete this prefab" })
 			end
 		end })
 	end
@@ -2485,6 +2791,14 @@ UI.TAB_BUILD = {
 	history = function(p) UI.tabHistory(p) end
 }
 
+UI.TAB_ICONS = {
+	scene = "box", create = "plus", library = "folder", links = "link", history = "undo",
+	properties = "pencil", players = "body", joints = "joint",
+	file = "save", rules = "list", world = "world", stats = "bars", console = "terminal", tbm = "export", settings = "gear"
+}
+
+UI.ARROW_ICONS = { ["<"] = "chevleft", [">"] = "chevright", ["v"] = "chevdown", ["^"] = "chevup" }
+
 UI.DOCKS = {
 	{ side = "left", tabs = { { "scene", "Scene" }, { "create", "Create" }, { "library", "Library" }, { "links", "Links" }, { "history", "History" } } },
 	{ side = "right", tabs = { { "properties", "Properties" }, { "players", "Bodies" }, { "joints", "Joints" } } },
@@ -2494,7 +2808,7 @@ UI.DOCKS = {
 UI.dockState = UI.dockState or {
 	left = { active = "scene", open = true },
 	right = { active = "properties", open = true },
-	bottom = { active = "file", open = false }
+	bottom = { active = "file", open = true }
 }
 UI.dockEls = UI.dockEls or {}
 UI.dockContent = UI.dockContent or {}
@@ -2522,7 +2836,8 @@ function UI.selectTab(id)
 	UI.dockState[side].active = id
 	UI.dockState[side].open = true
 	UI.linkPick = nil
-	UI.buildDock(side)
+	UI.saveDockState()
+	UI.buildDocks()
 end
 
 local function dockRect(side)
@@ -2548,31 +2863,74 @@ local function dockRect(side)
 		y = math.max(0, math.min(L.y, bottom - h))
 		return x, y, w, h
 	end
-	-- Default: Scene and Properties stacked down the left edge, File / Rules /
-	-- Stats... in the bottom-right corner, the 3D view free in the middle
-	sideW = MS.clamp(floor(WIN_W * 0.1875), floor(250 * UI.k), floor(400 * UI.k))
-	local avail = bottom - top
-	local leftH = floor(avail * 0.55)
-	if (side == "left") then
-		return 0, top, sideW, open and leftH or UI.HEADER_H
-	elseif (side == "right") then
-		-- Sits under the Scene panel and moves up when that one is tucked away
-		local y = top + (UI.dockState.left.open and leftH or UI.HEADER_H)
-		return 0, y, sideW, open and (bottom - y) or UI.HEADER_H
+	-- Default: Scene down the left, Properties down the right, the bottom
+	-- tabs in between (see layout.lua). Tucked-away side panels become rails.
+	return UI.layoutCalc.dockRect(side, {
+		left = UI.dockState.left.open, right = UI.dockState.right.open, bottom = UI.dockState.bottom.open
+	}, MS.settings.dockSizes or {}, UI.layoutMetrics())
+end
+
+---Window and bar sizes the layout maths needs
+function UI.layoutMetrics()
+	return { winW = WIN_W, winH = WIN_H, top = UI.topBarH(), bottom = WIN_H - UI.statusH(), row = ROW, header = UI.HEADER_H, k = UI.k }
+end
+
+---Is this panel in its default place (not dragged somewhere by the user)?
+function UI.isDocked(side)
+	local L = MS.settings.layout and MS.settings.layout[side]
+	return not (L and L.w)
+end
+
+---Remembers which tabs are open between sessions
+function UI.saveDockState()
+	MS.settings.dockState = UI.layoutCalc.serializeState(UI.dockState)
+	MS.saveSettings()
+end
+
+function UI.restoreDockState()
+	local tabs = {}
+	for _, d in ipairs(UI.DOCKS) do
+		tabs[d.side] = {}
+		for _, t in ipairs(d.tabs) do tabs[d.side][t[1]] = true end
 	end
-	local bw = MS.clamp(floor(WIN_W * 0.31), floor(380 * UI.k), WIN_W - sideW - 20)
-	local bh = open and floor(avail * 0.54) or UI.HEADER_H
-	return WIN_W - bw, bottom - bh, bw, bh
+	UI.layoutCalc.restoreState(UI.dockState, MS.settings.dockState, tabs)
 end
 
 ---Rebuilds a panel after it was opened / tucked away. The default Properties
 ---panel sits under the Scene panel, so it follows when Scene changes size.
 function UI.rebuildAfterToggle(side)
-	UI.buildDock(side)
-	local placed = MS.settings.layout and MS.settings.layout.right and MS.settings.layout.right.w
-	if (side == "left" and not placed and UI.dockEls.right) then
-		UI.buildDock("right")
-	end
+	UI.saveDockState()
+	-- Tucking a side panel away widens the bottom one, so rebuild them all
+	UI.buildDocks()
+end
+
+---A thin strip on the inner edge of a docked panel: drag to resize, double-click to reset
+function UI.edgeHandle(root, side)
+	local Lc = UI.layoutCalc
+	local t = Lc.EDGE
+	local x, y, w, h
+	if (side == "left") then x, y, w, h = root.size.w - t, UI.HEADER_H, t, root.size.h - UI.HEADER_H
+	elseif (side == "right") then x, y, w, h = 0, UI.HEADER_H, t, root.size.h - UI.HEADER_H
+	else x, y, w, h = 0, 0, root.size.w, 3 end
+	local g = root:addChild({
+		pos = { x, y }, size = { w, h }, interactive = true,
+		bgColor = C.clear, hoverColor = C.lightest, pressedColor = C.lightest
+	})
+	g:addMouseHandlers(function()
+		local now = MS.clock()
+		UI.lastEdgeClick = UI.lastEdgeClick or {}
+		if (Lc.isDoubleClick(UI.lastEdgeClick[side], now)) then
+			UI.lastEdgeClick[side] = nil
+			MS.settings.dockSizes = MS.settings.dockSizes or {}
+			MS.settings.dockSizes[side] = nil
+			MS.saveSettings()
+			UI.buildDocks()
+			return
+		end
+		UI.lastEdgeClick[side] = now
+		UI.startPointerDrag({ kind = "edge", side = side })
+	end, nil, function() UI.setTip("Drag to resize - double-click to reset", g) end)
+	return g
 end
 
 function UI.buildDock(side)
@@ -2589,8 +2947,28 @@ function UI.buildDock(side)
 	})
 	UI.dockEls[side] = root
 	local inner = root:addChild({ shift = { 1, 1 }, bgColor = C.bg, shapeType = ROUNDED, rounded = UI.r(4) }, true)
+	local Lc = UI.layoutCalc
+	local docked = UI.isDocked(side)
 
-	-- Tab row (always visible, even when the panel is tucked away)
+	-- A tucked-away side panel in its default place is a thin rail: an open
+	-- button, then one button per tab
+	if (docked and not st.open and side ~= "bottom") then
+		button(inner, 2, 3, inner.size.w - 4, ROW, "", function()
+			st.open = true
+			UI.rebuildAfterToggle(side)
+		end, { tip = "Open this panel", icon = UI.ARROW_ICONS[Lc.arrow(side, false)] })
+		for i, t in ipairs(def.tabs) do
+			button(inner, 2, 3 + (ROW + GAP + 2) * i, inner.size.w - 4, ROW, UI.TAB_ICONS[t[1]] and "" or Lc.railLabel(t[2]), function()
+				st.active, st.open = t[1], true
+				UI.linkPick = nil
+				UI.rebuildAfterToggle(side)
+			end, { scale = 0.46, tip = t[2], icon = UI.TAB_ICONS[t[1]] })
+		end
+		return
+	end
+
+	-- Tab row (always visible, even when the panel is tucked away) on a darker strip
+	inner:addChild({ pos = { 0, 0 }, size = { inner.size.w, UI.HEADER_H }, bgColor = C.darkest })
 	local n = #def.tabs
 	local tw = (inner.size.w - 4 - (ROW + GAP) * 2 - GAP * (n - 1)) / n
 	local function fullRect()
@@ -2601,11 +2979,12 @@ function UI.buildDock(side)
 		st.open = wasOpen
 		return { fx, fy, fw, fh }
 	end
-	layoutGrip(inner, inner.size.w - (ROW + GAP) * 2 - 2 + GAP, 2, ROW, ROW, "::", side, "move", fullRect,
+	layoutGrip(inner, inner.size.w - (ROW + GAP) * 2 - 2 + GAP, 3, ROW, ROW, "::", side, "move", fullRect,
 		"Drag to move this panel (Settings > Reset panel layout puts it back)")
 	for i, t in ipairs(def.tabs) do
 		local id = t[1]
-		button(inner, 2 + (i - 1) * (tw + GAP), 2, tw, ROW, t[2], function()
+		local isActive = st.open and st.active == id
+		local tabBtn = button(inner, 2 + (i - 1) * (tw + GAP), 3, tw, ROW, t[2], function()
 			if (st.open and st.active == id) then
 				st.open = false
 			else
@@ -2613,13 +2992,18 @@ function UI.buildDock(side)
 			end
 			UI.linkPick = nil
 			UI.rebuildAfterToggle(side)
-		end, { active = st.open and st.active == id, scale = 0.46,
-			tip = (st.open and st.active == id) and "Click again to tuck this panel away" or nil })
+		end, { color = isActive and C.bg or C.dark, scale = 0.46,
+			icon = UI.TAB_ICONS[id], iconFallback = true, noAutoIcon = true,
+			tip = isActive and "Click again to tuck this panel away" or t[2] })
+		-- Active tab: panel colour with an accent underline
+		if (isActive) then
+			tabBtn:addChild({ pos = { 0, ROW - 2 }, size = { tw, 2 }, bgColor = C.lightest })
+		end
 	end
-	button(inner, inner.size.w - ROW - 2, 2, ROW, ROW, st.open and "-" or "+", function()
+	button(inner, inner.size.w - ROW - 2, 3, ROW, ROW, "", function()
 		st.open = not st.open
 		UI.rebuildAfterToggle(side)
-	end, { tip = st.open and "Tuck this panel away" or "Open this panel" })
+	end, { tip = st.open and "Tuck this panel away" or "Open this panel", icon = UI.ARROW_ICONS[Lc.arrow(side, st.open)] })
 
 	if (not st.open) then return end
 	local content = inner:addChild({ pos = { 0, UI.HEADER_H }, size = { inner.size.w, inner.size.h - UI.HEADER_H }, bgColor = C.bg })
@@ -2629,6 +3013,8 @@ function UI.buildDock(side)
 	UI.dockGrips = UI.dockGrips or {}
 	UI.dockGrips[side] = layoutGrip(inner, inner.size.w - 16, inner.size.h - 16, 16, 16, "/", side, "resize", fullRect,
 		"Drag to resize this panel")
+	-- Panels in their default place also resize by dragging their inner edge
+	if (docked) then UI.edgeHandle(root, side) end
 end
 
 function UI.refreshDock(side)
@@ -2651,6 +3037,7 @@ function UI.refresh()
 	for _, d in ipairs(UI.DOCKS) do
 		UI.refreshDock(d.side)
 	end
+	UI.raiseOverlays()
 end
 
 function UI.buildDocks()
@@ -2683,6 +3070,14 @@ function UI.toggleSnap()
 	MS.toast("Snapping " .. (MS.settings.snap and "on" or "off") .. " (hold Ctrl to flip it while dragging)")
 end
 
+function UI.toggleGrid()
+	MS.settings.showGrid = not MS.settings.showGrid
+	MS.saveSettings()
+	UI.buildToolbar()
+	UI.requestRefresh()
+	MS.toast(MS.settings.showGrid and "Floor grid on" or "Floor grid off")
+end
+
 function UI.topBarH() return ROW + 10 end
 function UI.statusH() return ROW + 4 end
 
@@ -2691,25 +3086,21 @@ function UI.buildToolbar()
 	if (not MS.active) then return end
 	local st = MS.settings
 	local items = {
-		{ "Select", function() UI.setTool("select") end, st.tool == "select", "1 - Click objects. Shift+click adds, Shift+drag box-selects" },
-		{ "Move", function() UI.setTool("move") end, st.tool == "move", "2 - Arrows: one axis. Squares: a plane. Center dot: free" },
-		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "3 - Drag a colored ring" },
-		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "4 - Drag a handle to stretch, center to resize evenly" },
-		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "5 - Click two points to see the distance between them" },
+		{ "Select", function() UI.setTool("select") end, st.tool == "select", "F1 - Click objects. Shift+click adds, Shift+drag box-selects" },
+		{ "Move", function() UI.setTool("move") end, st.tool == "move", "F2 - Arrows: one axis. Squares: a plane. Center dot: free" },
+		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "F3 - Drag a colored ring" },
+		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "F4 - Drag a handle to stretch, center to resize evenly" },
+		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "F9 - Click two points to see the distance between them" },
 		false,
 		{ st.space == "world" and "World" or "Local", UI.toggleSpace, false, "L - Gizmo aligned to the world or to the object" },
 		{ st.snap and "Snap on" or "Snap off", UI.toggleSnap, st.snap, "G - Snap to the grid (Ctrl flips it while dragging)" },
-		{ st.surfaceSnap and "Stick on" or "Stick off", function()
-			st.surfaceSnap = not st.surfaceSnap
-			MS.saveSettings()
-			UI.buildToolbar()
-			MS.toast(st.surfaceSnap and "Dragged objects rest on other objects and line up with their edges (Shift flips it)" or "Dragged objects slide at their own height (Shift flips it)")
-		end, st.surfaceSnap, "Dragged objects sit on whatever is under the cursor and line up edges. Hold Shift while dragging to flip" },
+		{ st.showGrid and "Grid on" or "Grid off", UI.toggleGrid, st.showGrid, "Show or hide the floor grid" },
 		false,
 		{ "Undo", MS.undo, false, "Ctrl+Z" },
 		{ "Redo", MS.redo, false, "Ctrl+Y" },
 		{ "Focus", MS.focusSelection, false, "F - Point the camera at the selection" },
 		{ "Test", function() UI.enterTest() end, false, "Play the mod, then come back to editing" },
+		{ "Look", function() UI.selectTab("settings") end, false, "Colours, panel colour and interface size (Settings tab)" },
 		{ "Help", function() UI.toggleHelp() end, false, "H - Shortcuts and tips" },
 		false,
 		{ "Close", function() MS.close() end, false, "Close Mod Studio" }
@@ -2737,7 +3128,7 @@ function UI.buildToolbar()
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
-			button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = 0.46 })
+			button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = 0.46, noAutoIcon = true })
 			x = x + bw + GAP
 		else
 			x = x + 10
@@ -2783,7 +3174,7 @@ local function contextHint()
 		if (t == "suni") then return "Drag to resize evenly" end
 	end
 	if (G.hoverVertex) then return "Drag this corner to reshape the triangle" end
-	if (G.hoverObj) then return "Click to select " .. MS.objName(G.hoverObj) .. ". Drag to slide it (Alt: up/down)" end
+	if (G.hoverObj) then return "Click to select " .. MS.objName(G.hoverObj) .. ". Drag to hold it under the cursor" end
 	if (MS.settings.tool == "measure") then
 		return (MS.measure and MS.measure.a and not MS.measure.b) and "Click the second point" or "Click a point on an object or the floor to start measuring (Snap rounds to the grid)"
 	end
@@ -2791,7 +3182,7 @@ local function contextHint()
 	if (UI.isTabOpen("players")) then return "Click a body part in the world or the grid. Use the gizmo to move/resize it." end
 	if (UI.isTabOpen("joints")) then return "Click a joint in the world or the grid to edit it." end
 	if (MS.selCount() == 0) then return "Click an object to select it - or add one from the Objects / Create tab. H = help" end
-	return "Arrows: nudge | Ctrl+D: duplicate | Del: delete | F: focus | Ctrl+Z: undo | 1-4: tools"
+	return "Arrows: nudge | Ctrl+D: duplicate | Del: delete | F: focus | Ctrl+Z: undo | F1-F4: tools"
 end
 
 function UI.statusText()
@@ -2852,14 +3243,14 @@ UI.HELP = {
 	{ "Shift+drag", "Box-select on empty space" },
 	{ "Ctrl+A / Esc", "Select everything / deselect" },
 	{ "Editing", true },
-	{ "1 2 3 4 5", "Select, Move, Rotate, Scale, Measure tools" },
-	{ "Drag object", "It rests on what's under the cursor and lines up edges (Shift: off, Alt: up/down)" },
+	{ "F1 F2 F3 F4 F9", "Select, Move, Rotate, Scale, Measure tools" },
+	{ "Drag object", "Holds it under the cursor at the same distance from the camera" },
 	{ "WASD (dragging)", "Move the camera - the held object comes along" },
 	{ "Arrow keys", "Nudge by one grid step (PgUp/PgDn: up/down, Shift: finer)" },
 	{ "L / G", "World or local gizmo / snapping on or off" },
 	{ "Ctrl (dragging)", "Temporarily flip snapping" },
 	{ "Ctrl+D / Del", "Duplicate / delete" },
-	{ "F2", "Rename the selection (or double-click it in Scene)" },
+	{ "Ctrl+R", "Rename the selection (or double-click it in Scene)" },
 	{ "Ctrl+C / Ctrl+V", "Copy / paste" },
 	{ "Ctrl+Z / Ctrl+Y", "Undo / redo (everything is undoable)" },
 	{ "Parenting", true },
@@ -2868,17 +3259,40 @@ UI.HELP = {
 	{ "[  /  ]", "Select parent / select children (Shift+]: whole branch)" },
 	{ "Children", "Follow their parent when it's moved, turned, resized, copied or mirrored" },
 	{ "More", true },
-	{ "Scroll (dragging)", "While click-dragging an object: push it away / pull it closer. Shift+scroll zooms" },
+	{ "Scroll (dragging)", "Push it away / pull it closer. Shift+scroll zooms the camera" },
 	{ "Alt + gizmo drag", "Drag out a copy instead of moving the original" },
 	{ "Ctrl+H / Ctrl+Shift+H", "Hide the selection in the editor / show everything" },
 	{ "Ctrl+I", "Isolate: hide everything except the selection (again to show all)" },
 	{ "Ctrl+Shift+C / V", "Copy / paste all properties (color, physics, thrust, trigger)" },
+	{ "3D models", "Properties > 3D model: pick an .obj from data/mod_assets for an object. Export adds use_model / model_name" },
 	{ "Panels", "Drag :: to move a panel, the / corner to resize it. Scroll lists with the wheel" },
 	{ "Files", true },
 	{ "Ctrl+S", "Save project (keeps names, groups, parents, triangles)" },
 	{ "Ctrl+E", "Export a playable .tbm mod" },
+	{ "Assets", "File tab > 3D model assets: asset list, welcome-message note, copy into data/mod_assets/<mod>" },
 	{ "Tip", "Drag any field's label left/right to change it" }
 }
+
+-- Anything (re)built after the help/dialog would draw over it, so push them back on top after every rebuild
+for _, name in ipairs({ "buildDock", "buildToolbar", "buildStatus" }) do
+	local build = UI[name]
+	UI[name] = function(...)
+		local r = build(...)
+		UI.raiseOverlays()
+		return r
+	end
+end
+
+---Re-queues the help and dialog overlays so they draw (and take the mouse) above anything built after them.
+---toriui draws in show order and hands the mouse to the last shown element; hide + show moves an element to the end.
+function UI.raiseOverlays()
+	for _, el in ipairs({ UI.help, UI.dialog }) do
+		if (el and not el.destroyed) then
+			el:hide()
+			el:show()
+		end
+	end
+end
 
 function UI.toggleHelp(force)
 	if (UI.help and not force) then
@@ -2891,29 +3305,64 @@ function UI.toggleHelp(force)
 		return
 	end
 	if (UI.help) then UI.help:kill() end
-	local rowH = 20
+
+	-- Free space between the top bar and the bottom dock / status bar
+	local top = UI.toolbar and not UI.toolbar.destroyed and (UI.toolbar.pos.y + UI.toolbar.size.h) or 0
+	local bottom = WIN_H
+	if (UI.status and not UI.status.destroyed and UI.status.pos.y > WIN_H / 2) then bottom = UI.status.pos.y end
+	local bd = UI.dockEls and UI.dockEls.bottom
+	if (bd and not bd.destroyed and bd.pos.y > WIN_H / 2 and bd.pos.y < bottom) then bottom = bd.pos.y end
+	top, bottom = top + 6, bottom - 6
+	local avail = math.max(200, bottom - top)
+
+	local HEAD, FOOT, MINROW = 44, 44, 16
+	local rows = UI.HELP
+	local cols, split = 1, #rows + 1
 	local W = math.min(560, WIN_W - 40)
-	local H = 70 + #UI.HELP * rowH + 40
+	if (HEAD + #rows * 20 + FOOT > avail) then
+		-- Two columns, split at the section header nearest the middle
+		cols = 2
+		W = math.min(1000, WIN_W - 40)
+		local best
+		for i, row in ipairs(rows) do
+			if (row[2] == true and i > 1 and (not best or math.abs(i - #rows / 2) < math.abs(best - #rows / 2))) then best = i end
+		end
+		split = best or (floor(#rows / 2) + 1)
+	end
+	local maxRows = cols == 1 and #rows or math.max(split - 1, #rows - split + 1)
+	local rowH = math.max(MINROW, math.min(20, floor((avail - HEAD - FOOT) / maxRows)))
+	local H = math.min(avail, HEAD + maxRows * rowH + FOOT)
+
+	local black, white = { 0, 0, 0, 1 }, { 1, 1, 1, 1 }
 	local box = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
-		pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H },
-		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(8), interactive = true
+		pos = { floor((WIN_W - W) / 2), floor(top + (avail - H) / 2) }, size = { W, H },
+		bgColor = { 0.45, 0.45, 0.45, 1 }, shapeType = ROUNDED, rounded = UI.r(8), interactive = true,
+		uiColor = black
 	})
 	UI.help = box
-	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
+	local inner = box:addChild({ shift = { 2, 2 }, bgColor = white, uiColor = black }, true)
 	label(inner, 14, 8, W - 30, 30, MS.settings.firstRun and "Welcome to Mod Studio!" or "Mod Studio - shortcuts", LEFTMID, 0.75, UI.TITLE_FONT)
-	local y = 44
-	for _, row in ipairs(UI.HELP) do
+	local colW = (W - 4) / cols
+	local keyW = cols == 1 and 150 or 130
+	for i, row in ipairs(rows) do
+		local col, idx = 0, i
+		if (cols == 2 and i >= split) then col, idx = 1, i - split + 1 end
+		local x0 = floor(col * colW)
+		local y = HEAD + (idx - 1) * rowH
 		if (row[2] == true) then
-			local bar = inner:addChild({ pos = { 10, y + 2 }, size = { W - 24, rowH - 2 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
+			local bar = inner:addChild({ pos = { x0 + 10, y + 2 }, size = { colW - 20, rowH - 2 }, bgColor = { 0.85, 0.85, 0.85, 1 }, shapeType = ROUNDED, rounded = UI.r(3) })
 			bar:addAdaptedText(false, row[1], 6, nil, 4, LEFTMID, 0.48)
 		else
-			label(inner, 18, y, 150, rowH, row[1], LEFTMID, 0.47)
-			label(inner, 170, y, W - 190, rowH, row[2], LEFTMID, 0.47)
+			label(inner, x0 + 18, y, keyW, rowH, row[1], LEFTMID, 0.47)
+			label(inner, x0 + 18 + keyW + 4, y, colW - keyW - 30, rowH, row[2], LEFTMID, 0.47)
 		end
-		y = y + rowH
 	end
-	button(inner, W / 2 - 80, H - 36, 160, 28, MS.settings.firstRun and "Let's go!" or "Close (H)", function() UI.toggleHelp() end)
+	local btn = button(inner, W / 2 - 80, inner.size.h - 36, 160, 28, MS.settings.firstRun and "Let's go!" or "Close (H)", function() UI.toggleHelp() end)
+	-- Black text would vanish on the dark button
+	btn.uiColor = { 1, 1, 1, 1 }
+	for _, c in ipairs(btn.child) do c.uiColor = btn.uiColor end
+	UI.raiseOverlays()
 end
 
 ---------------------------------------------------------------------------
@@ -3016,6 +3465,7 @@ function UI.enterTest()
 		return
 	end
 	MS.testMode = true
+	MS.showGameHud()
 	for _, el in ipairs(UI.roots()) do
 		if (el and not el.destroyed) then el:hide() end
 	end
@@ -3032,6 +3482,7 @@ end
 function UI.exitTest()
 	pcall(exit_mod_maker_test_mode)
 	MS.testMode = false
+	MS.hideGameHud()
 	if (UI.testBar) then UI.testBar:kill() end
 	UI.testBar = nil
 	for _, el in ipairs(UI.roots()) do
@@ -3048,6 +3499,7 @@ end
 function UI.open()
 	WIN_W, WIN_H = get_window_size()
 	UI.applyTheme()
+	UI.restoreDockState()
 	UI.buildDocks()
 	UI.buildToolbar()
 	UI.buildStatus()

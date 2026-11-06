@@ -1,13 +1,13 @@
--- Mod Studio v2: dock layout maths
+-- Mod Studio: dock layout maths
 -- Pure functions (numbers in, numbers out, no UI calls) so they can be tested
--- outside the game. The interface in uiv2.lua calls these to place the three
+-- outside the game. The interface in ui.lua calls these to place the three
 -- docks like an editor: Scene down the left, Properties down the right and the
 -- bottom tabs in between. A tucked-away side dock shrinks to a thin rail and
 -- the bottom dock grows into the freed space.
 
-local MSV2 = MSV2
-MSV2.UI = MSV2.UI or {}
-local UI = MSV2.UI
+local MS = MS
+MS.UI = MS.UI or {}
+local UI = MS.UI
 
 local floor = math.floor
 local function clamp(v, lo, hi) return math.max(lo, math.min(hi, v)) end

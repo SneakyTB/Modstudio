@@ -14,13 +14,13 @@
 --     rotation and scaled per axis by the object's "sides" (bowling_noki: pin sides 0.2 0.2 0.75 sit exactly
 --     on the lane because 0.75 * model z-min -0.491 + pos z 0.72 = 0.352 = lane top).
 
-local MSV2 = MSV2
-local V, M = MSV2.V, MSV2.M
+local MS = MS
+local V, M = MS.V, MS.M
 local floor, abs, max, min = math.floor, math.abs, math.max, math.min
-local clock = MSV2.clock
+local clock = MS.clock
 
-MSV2.ASSET_ROOT = "data/mod_assets"
-local ROOT = MSV2.ASSET_ROOT
+MS.ASSET_ROOT = "data/mod_assets"
+local ROOT = MS.ASSET_ROOT
 
 ---------------------------------------------------------------------------
 -- File helpers (io.open with root = true starts at the Toribash folder)
@@ -32,14 +32,14 @@ local function openRoot(path, mode)
 	return nil
 end
 
-function MSV2.fileExists(path)
+function MS.fileExists(path)
 	local f = openRoot(path, "rb")
 	if (f) then f:close() return true end
 	return false
 end
 
 ---Whole file as a string (binary safe), or nil
-function MSV2.readBytes(path)
+function MS.readBytes(path)
 	local f = openRoot(path, "rb")
 	if (not f) then return nil end
 	local ok, data = pcall(f.read, f, "*a")
@@ -50,7 +50,7 @@ end
 
 ---Writes a whole file (binary). Returns true on success. Callers must check the file doesn't exist
 ---first when they must not overwrite: "wb" truncates.
-function MSV2.writeBytes(path, data)
+function MS.writeBytes(path, data)
 	local f = openRoot(path, "wb")
 	if (not f) then return false end
 	local ok = pcall(f.write, f, data)
@@ -73,7 +73,7 @@ local function dirName(path) return (tostring(path):gsub("\\", "/"):match("^(.*)
 ---------------------------------------------------------------------------
 
 ---Tidies what a user typed or the picker gave: slashes, no .obj, no "data/mod_assets/" prefix
-function MSV2.cleanModelName(s)
+function MS.cleanModelName(s)
 	s = tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("\\", "/")
 	s = s:gsub("^[Dd]ata/[Mm]od_assets/", ""):gsub("^[Mm]od_assets/", ""):gsub("^/+", "")
 	s = s:gsub("%.[Oo][Bb][Jj]$", ""):gsub("//+", "/")
@@ -82,19 +82,19 @@ end
 
 ---Folders between data/mod_assets and the mod. For a file name like "modmaker/Foo.tbm" it's { "modmaker", "Foo" }.
 ---With no name (not exported yet) Mod Studio's own export location is assumed.
-function MSV2.modBaseSegs(fullName)
-	local depth = tonumber(MSV2.settings.modelDepth) or 2
+function MS.modBaseSegs(fullName)
+	local depth = tonumber(MS.settings.modelDepth) or 2
 	if (fullName and fullName ~= "") then
 		local segs = splitPath((tostring(fullName):gsub("%.[Tt][Bb][Mm]$", "")))
 		if (#segs > 0) then return segs end
 	end
-	local name = MSV2.safeName(MSV2.saveName or "Untitled")
+	local name = MS.safeName(MS.saveName or "Untitled")
 	if (depth >= 2) then return { "modmaker", name } end
 	return { name }
 end
 
 ---"../Noki/bowling" (as written in a .tbm) -> "Noki/bowling". Returns nil, reason when it climbs out of mod_assets.
-function MSV2.resolveModelName(rel, baseSegs)
+function MS.resolveModelName(rel, baseSegs)
 	local stack = {}
 	for _, s in ipairs(baseSegs or {}) do table.insert(stack, s) end
 	for _, part in ipairs(splitPath(rel)) do
@@ -110,7 +110,7 @@ function MSV2.resolveModelName(rel, baseSegs)
 end
 
 ---"Noki/bowling" -> "../../Noki/bowling" for a mod whose assets folder is baseSegs
-function MSV2.relativeModelName(canon, baseSegs)
+function MS.relativeModelName(canon, baseSegs)
 	if (not canon or canon == "") then return "" end
 	local segs = splitPath(canon)
 	for _, s in ipairs(segs) do
@@ -127,7 +127,7 @@ function MSV2.relativeModelName(canon, baseSegs)
 end
 
 ---Reasons a stored model name won't load (nil = fine)
-function MSV2.modelNameProblem(name)
+function MS.modelNameProblem(name)
 	if (not name or name == "") then return "no model chosen" end
 	if (name:find("\\", 1, true)) then return "uses backslashes (use /)" end
 	if (name:find("^%a:") or name:find("^/")) then return "is an absolute path (must be inside data/mod_assets)" end
@@ -142,8 +142,8 @@ end
 -- Finding .obj files under data/mod_assets
 ---------------------------------------------------------------------------
 
-MSV2.modelList = MSV2.modelList or nil
-MSV2.modelListTime = MSV2.modelListTime or 0
+MS.modelList = MS.modelList or nil
+MS.modelListTime = MS.modelListTime or 0
 
 local function isFolder(path)
 	if (is_folder) then
@@ -153,8 +153,8 @@ local function isFolder(path)
 	return false
 end
 
-function MSV2.scanModels(force)
-	if (MSV2.modelList and not force and clock() - MSV2.modelListTime < 60) then return MSV2.modelList end
+function MS.scanModels(force)
+	if (MS.modelList and not force and clock() - MS.modelListTime < 60) then return MS.modelList end
 	local out = {}
 	local seen = 0
 	local function walk(dir, rel, depth)
@@ -174,7 +174,7 @@ function MSV2.scanModels(force)
 	end
 	walk(ROOT, "", 0)
 	table.sort(out, function(a, b) return a:lower() < b:lower() end)
-	MSV2.modelList, MSV2.modelListTime = out, clock()
+	MS.modelList, MS.modelListTime = out, clock()
 	return out
 end
 
@@ -182,7 +182,7 @@ end
 -- Reading an .obj: bounds, UVs, material file and textures
 ---------------------------------------------------------------------------
 
-MSV2.objCache = MSV2.objCache or {}
+MS.objCache = MS.objCache or {}
 
 local function texturesFromMtl(mtlText)
 	local list = {}
@@ -200,12 +200,12 @@ end
 
 ---Info about data/mod_assets/<name>.obj, cached for a few seconds:
 ---{ missing, min, max, center, ext, verts, hasUV, files = { existing paths }, absent = { missing paths }, textures, mtl }
-function MSV2.objInfo(name, force)
-	local c = MSV2.objCache[name]
+function MS.objInfo(name, force)
+	local c = MS.objCache[name]
 	if (c and not force and clock() - c.t < 15) then return c end
 	local info = { name = name, path = ROOT .. "/" .. name .. ".obj", t = clock(), files = {}, absent = {}, textures = {} }
-	MSV2.objCache[name] = info
-	local data = MSV2.readBytes(info.path)
+	MS.objCache[name] = info
+	local data = MS.readBytes(info.path)
 	if (not data) then
 		info.missing = true
 		table.insert(info.absent, info.path)
@@ -250,7 +250,7 @@ function MSV2.objInfo(name, force)
 	local refs = {}
 	if (info.mtl) then
 		local mtlPath = prefix .. info.mtl
-		local mtlText = MSV2.readBytes(mtlPath)
+		local mtlText = MS.readBytes(mtlPath)
 		if (mtlText) then
 			table.insert(info.files, mtlPath)
 			info.mtlFound = true
@@ -264,7 +264,7 @@ function MSV2.objInfo(name, force)
 		local p = prefix .. t:gsub("^%./", "")
 		if (not seenTex[p]) then
 			seenTex[p] = true
-			if (MSV2.fileExists(p)) then
+			if (MS.fileExists(p)) then
 				table.insert(info.files, p)
 				table.insert(info.textures, p)
 			else
@@ -276,7 +276,7 @@ function MSV2.objInfo(name, force)
 	local stem = baseName(name)
 	for _, ext in ipairs({ ".tga", ".png" }) do
 		local p = prefix .. stem .. ext
-		if (not seenTex[p] and MSV2.fileExists(p)) then
+		if (not seenTex[p] and MS.fileExists(p)) then
 			seenTex[p] = true
 			table.insert(info.files, p)
 			table.insert(info.textures, p)
@@ -287,30 +287,30 @@ function MSV2.objInfo(name, force)
 end
 
 ---------------------------------------------------------------------------
--- Per-object model state (stored in MSV2.meta so undo, copy/paste, prefabs and projects carry it)
+-- Per-object model state (stored in MS.meta so undo, copy/paste, prefabs and projects carry it)
 ---------------------------------------------------------------------------
 
-function MSV2.objModel(idx)
-	local m = MSV2.meta[idx]
+function MS.objModel(idx)
+	local m = MS.meta[idx]
 	if (not m) then return false, "" end
 	return m.useModel == true, m.modelName or ""
 end
 
 local function touch()
-	MSV2.changed = true
-	MSV2.changedSinceAutosave = true
+	MS.changed = true
+	MS.changedSinceAutosave = true
 	-- Only metadata changed: the game's world doesn't need a rebuild
 end
 
 ---Sets the model for a list of object indices. `use` / `name` may be nil to leave that part alone.
-function MSV2.setObjModels(list, use, name)
+function MS.setObjModels(list, use, name)
 	for _, idx in ipairs(list) do
-		if (MSV2.objs[idx]) then
-			MSV2.meta[idx] = MSV2.meta[idx] or {}
-			local m = MSV2.meta[idx]
+		if (MS.objs[idx]) then
+			MS.meta[idx] = MS.meta[idx] or {}
+			local m = MS.meta[idx]
 			if (use ~= nil) then m.useModel = use and true or nil end
 			if (name ~= nil) then
-				name = MSV2.cleanModelName(name)
+				name = MS.cleanModelName(name)
 				m.modelName = name ~= "" and name or nil
 			end
 			if (m.useModel == nil and m.modelName == nil) then m.useModel, m.modelName = nil, nil end
@@ -319,11 +319,11 @@ function MSV2.setObjModels(list, use, name)
 	touch()
 end
 
-function MSV2.modelUsers()
+function MS.modelUsers()
 	local users, order = {}, {}
-	for _, idx in ipairs(MSV2.sortedKeys(MSV2.meta)) do
-		local m = MSV2.meta[idx]
-		if (m and m.useModel and MSV2.objs[idx]) then
+	for _, idx in ipairs(MS.sortedKeys(MS.meta)) do
+		local m = MS.meta[idx]
+		if (m and m.useModel and MS.objs[idx]) then
 			local name = m.modelName or ""
 			if (not users[name]) then users[name] = {}; table.insert(order, name) end
 			table.insert(users[name], idx)
@@ -338,7 +338,7 @@ end
 -- Slots (0..127) are shared with the game's own UI model cache, so we register in it.
 ---------------------------------------------------------------------------
 
-MSV2.modelSlots = MSV2.modelSlots or {}   -- canonical name -> { slot, file } | { failed = time }
+MS.modelSlots = MS.modelSlots or {}   -- canonical name -> { slot, file } | { failed = time }
 local MAX_PREVIEW_MODELS = 16
 
 local function uiCache()
@@ -347,25 +347,25 @@ local function uiCache()
 	return _G.UIElement3DModelCache
 end
 
-function MSV2.modelSlot(name)
-	local rec = MSV2.modelSlots[name]
+function MS.modelSlot(name)
+	local rec = MS.modelSlots[name]
 	if (rec) then
 		if (rec.slot) then return rec.slot end
 		if (clock() - rec.failed < 4) then return nil end
 	end
-	if (not load_obj or MSV2.modelProblem) then return nil end
+	if (not load_obj or MS.modelProblem) then return nil end
 	local loaded = 0
-	for _, r in pairs(MSV2.modelSlots) do if (r.slot) then loaded = loaded + 1 end end
+	for _, r in pairs(MS.modelSlots) do if (r.slot) then loaded = loaded + 1 end end
 	if (loaded >= MAX_PREVIEW_MODELS) then
-		if (not MSV2.modelCapWarned) then
-			MSV2.modelCapWarned = true
-			MSV2.toast("Preview shows up to " .. MAX_PREVIEW_MODELS .. " different models at once")
+		if (not MS.modelCapWarned) then
+			MS.modelCapWarned = true
+			MS.toast("Preview shows up to " .. MAX_PREVIEW_MODELS .. " different models at once")
 		end
 		return nil
 	end
 	local file = ROOT .. "/" .. name
-	if (MSV2.modelNameProblem(name) or not MSV2.fileExists(file .. ".obj")) then
-		MSV2.modelSlots[name] = { failed = clock() }
+	if (MS.modelNameProblem(name) or not MS.fileExists(file .. ".obj")) then
+		MS.modelSlots[name] = { failed = clock() }
 		return nil
 	end
 	local cache = uiCache()
@@ -374,31 +374,31 @@ function MSV2.modelSlot(name)
 		local e = cache[i]
 		if (e and e.name == file) then
 			e.count = (e.count or 0) + 1
-			MSV2.modelSlots[name] = { slot = i, file = file }
+			MS.modelSlots[name] = { slot = i, file = file }
 			return i
 		elseif (not e and not slot) then
 			slot = i
 		end
 	end
 	if (not slot) then
-		MSV2.modelSlots[name] = { failed = clock() }
+		MS.modelSlots[name] = { failed = clock() }
 		return nil
 	end
 	local ok, res = pcall(load_obj, slot, file, 1)
 	if (not ok or not res) then
-		MSV2.modelSlots[name] = { failed = clock() }
+		MS.modelSlots[name] = { failed = clock() }
 		return nil
 	end
 	cache[slot] = { name = file, count = 1 }
 	_G.UIElement3DModelIndex = max(_G.UIElement3DModelIndex or 0, slot)
-	MSV2.modelSlots[name] = { slot = slot, file = file }
+	MS.modelSlots[name] = { slot = slot, file = file }
 	return slot
 end
 
 ---Releases one preview model (or all of them). Called on close and when the file changes.
-function MSV2.unloadModels(name)
+function MS.unloadModels(name)
 	local cache = uiCache()
-	for n, rec in pairs(MSV2.modelSlots) do
+	for n, rec in pairs(MS.modelSlots) do
 		if (not name or n == name) then
 			if (rec.slot) then
 				local e = cache[rec.slot]
@@ -412,10 +412,10 @@ function MSV2.unloadModels(name)
 					pcall(unload_obj, rec.slot)
 				end
 			end
-			MSV2.modelSlots[n] = nil
+			MS.modelSlots[n] = nil
 		end
 	end
-	MSV2.objCache = {}
+	MS.objCache = {}
 end
 
 local function rotTB(R)
@@ -426,31 +426,31 @@ local function rotTB(R)
 end
 
 ---Scale the game applies to a model: the object's sides per axis (box: full size; ball: radius)
-function MSV2.modelScale(idx)
-	local o = MSV2.objs[idx]
+function MS.modelScale(idx)
+	local o = MS.objs[idx]
 	local x, y, z = o.dims_x, o.dims_y, o.dims_z
 	if (o.type == 0) then y, z = x, x
 	elseif (o.type == 2) then z = z or y end
-	local k = MSV2.sizeK()
+	local k = MS.sizeK()
 	return { (x or 1) * k, (y or x or 1) * k, (z or x or 1) * k }
 end
 
 ---Called from the draw3d hook every frame
-function MSV2.drawModels()
-	if (not MSV2.settings.modelPreview or not draw_obj_m) then return end
-	for idx, m in pairs(MSV2.meta) do
+function MS.drawModels()
+	if (not MS.settings.modelPreview or not draw_obj_m) then return end
+	for idx, m in pairs(MS.meta) do
 		if (m.useModel and m.modelName and m.modelName ~= "") then
-			local o = MSV2.objs[idx]
+			local o = MS.objs[idx]
 			if (o and o.visible ~= false) then
-				local slot = MSV2.modelSlot(m.modelName)
+				local slot = MS.modelSlot(m.modelName)
 				if (slot) then
-					local s = MSV2.modelScale(idx)
-					local R = MSV2.objRot(idx)
+					local s = MS.modelScale(idx)
+					local R = MS.objRot(idx)
 					set_color(o.color_r or 1, o.color_g or 1, o.color_b or 1, o.color_a or 1)
 					local ok = pcall(draw_obj_m, slot, o.pos_x or 0, o.pos_y or 0, o.pos_z or 0, s[1], s[2], s[3], rotTB(R))
 					if (not ok) then
-						MSV2.modelProblem = true
-						MSV2.toast("Model preview isn't supported by this game version")
+						MS.modelProblem = true
+						MS.toast("Model preview isn't supported by this game version")
 					end
 				end
 			end
@@ -463,35 +463,35 @@ end
 ---------------------------------------------------------------------------
 
 ---Scale + centre the game will draw for the model on this object: world centre and full world extents of its bounding box
-function MSV2.modelWorldBox(idx)
-	local m = MSV2.meta[idx]
+function MS.modelWorldBox(idx)
+	local m = MS.meta[idx]
 	if (not m or not m.modelName) then return nil, "Pick a model first" end
-	local info = MSV2.objInfo(m.modelName)
+	local info = MS.objInfo(m.modelName)
 	if (info.missing) then return nil, "The model file isn't there: " .. info.path end
 	if (not info.ext) then return nil, "No vertices found in the model" end
-	local s = MSV2.modelScale(idx)
-	local R = MSV2.objRot(idx)
+	local s = MS.modelScale(idx)
+	local R = MS.objRot(idx)
 	local local_c = { info.center[1] * s[1], info.center[2] * s[2], info.center[3] * s[3] }
-	local c = V.add(MSV2.objPos(idx), M.apply(R, local_c))
+	local c = V.add(MS.objPos(idx), M.apply(R, local_c))
 	return { center = c, ext = { info.ext[1] * s[1], info.ext[2] * s[2], info.ext[3] * s[3] }, R = R, info = info, scale = s }
 end
 
 ---Sets the model scale (the object's size) and moves the object so the model's centre stays where it is
-function MSV2.setModelScale(list, k)
-	MSV2.pushUndo("Model scale", "model:scale")
+function MS.setModelScale(list, k)
+	MS.pushUndo("Model scale", "model:scale")
 	local n = 0
 	for _, idx in ipairs(list) do
-		local m = MSV2.meta[idx]
-		local o = MSV2.objs[idx]
+		local m = MS.meta[idx]
+		local o = MS.objs[idx]
 		if (m and m.useModel and m.modelName and o and o.type == 1) then
-			local info = MSV2.objInfo(m.modelName)
-			local before = info.center and MSV2.modelWorldBox(idx)
-			MSV2.objSet(idx, "dims_x", k)
-			MSV2.objSet(idx, "dims_y", k)
-			MSV2.objSet(idx, "dims_z", k)
+			local info = MS.objInfo(m.modelName)
+			local before = info.center and MS.modelWorldBox(idx)
+			MS.objSet(idx, "dims_x", k)
+			MS.objSet(idx, "dims_y", k)
+			MS.objSet(idx, "dims_z", k)
 			if (before) then
-				local after = MSV2.modelWorldBox(idx)
-				if (after) then MSV2.setObjPos(idx, V.add(MSV2.objPos(idx), V.sub(before.center, after.center))) end
+				local after = MS.modelWorldBox(idx)
+				if (after) then MS.setObjPos(idx, V.add(MS.objPos(idx), V.sub(before.center, after.center))) end
 			end
 			n = n + 1
 		end
@@ -502,18 +502,18 @@ end
 ---Adds an invisible static box exactly around the drawn model (parented to the object) - one undo step.
 ---The model is scaled by the object's own size, so the object's own box can't also be the model's hitbox
 ---unless the model is about 1 unit big (then nothing needs adding).
-function MSV2.modelAddHitbox(idx)
-	local box, why = MSV2.modelWorldBox(idx)
-	if (not box) then MSV2.toast(why) return nil end
-	local e, o = box.ext, MSV2.objs[idx]
+function MS.modelAddHitbox(idx)
+	local box, why = MS.modelWorldBox(idx)
+	if (not box) then MS.toast(why) return nil end
+	local e, o = box.ext, MS.objs[idx]
 	local info = box.info
 	local unit = abs(info.ext[1] - 1) < 0.15 and abs(info.ext[2] - 1) < 0.15 and abs(info.ext[3] - 1) < 0.15
 	if (unit) then
-		MSV2.toast("This model is about 1 unit big, so the object's own box already fits it - just set the object's size")
+		MS.toast("This model is about 1 unit big, so the object's own box already fits it - just set the object's size")
 		return nil
 	end
 	local newIdx
-	MSV2.withUndo("Fit hitbox to model", function()
+	MS.withUndo("Fit hitbox to model", function()
 		local rx, ry, rz = M.toEuler(box.R)
 		local f = {
 			type = 1, pos_x = box.center[1], pos_y = box.center[2], pos_z = box.center[3],
@@ -522,15 +522,15 @@ function MSV2.modelAddHitbox(idx)
 			static = o.static, visible = false, color_r = 0.2, color_g = 0.8, color_b = 1, color_a = 0.3,
 			friction = o.friction, bounce = o.bounce, hardness = o.hardness, mass = o.mass or 1
 		}
-		newIdx = MSV2.createObj(f, { name = MSV2.objName(idx) .. " hitbox" })
+		newIdx = MS.createObj(f, { name = MS.objName(idx) .. " hitbox" })
 		if (newIdx) then
-			local pk, ck = MSV2.nodeKey(idx), MSV2.nodeKey(newIdx)
-			if (pk and ck and MSV2.setParent) then MSV2.setParent({ ck }, pk) end
+			local pk, ck = MS.nodeKey(idx), MS.nodeKey(newIdx)
+			if (pk and ck and MS.setParent) then MS.setParent({ ck }, pk) end
 		end
 	end)
 	if (newIdx) then
-		MSV2.selSet(newIdx)
-		MSV2.toast("Added an invisible hitbox " .. MSV2.fmt(e[1]) .. " x " .. MSV2.fmt(e[2]) .. " x " .. MSV2.fmt(e[3]) .. " around the model (child of the object)")
+		MS.selSet(newIdx)
+		MS.toast("Added an invisible hitbox " .. MS.fmt(e[1]) .. " x " .. MS.fmt(e[2]) .. " x " .. MS.fmt(e[3]) .. " around the model (child of the object)")
 	end
 	return newIdx
 end
@@ -559,41 +559,41 @@ local function tbmPath(written)
 	if (not written:lower():find("%.tbm$")) then written = written .. ".tbm" end
 	return "data/mod/" .. written
 end
-MSV2.tbmPath = tbmPath
+MS.tbmPath = tbmPath
 
 ---The mod's path under data/mod without .tbm, as the game knows it ("modmaker/Name"). export_mod_maker's
 ---return value may or may not include the modmaker/ folder, so look for the file.
-function MSV2.normExport(written)
+function MS.normExport(written)
 	local w = tostring(written or ""):gsub("\\", "/"):gsub("%.[Tt][Bb][Mm]$", "")
-	if (not MSV2.fileExists("data/mod/" .. w .. ".tbm") and MSV2.fileExists("data/mod/modmaker/" .. w .. ".tbm")) then
+	if (not MS.fileExists("data/mod/" .. w .. ".tbm") and MS.fileExists("data/mod/modmaker/" .. w .. ".tbm")) then
 		w = "modmaker/" .. w
 	end
 	return w
 end
 
 ---Adds use_model 1 / model_name to the env_obj blocks of an exported mod. Returns patched count, error text.
-function MSV2.writeModelLines(written)
+function MS.writeModelLines(written)
 	local want = {}
 	local total = 0
-	for idx, m in pairs(MSV2.meta) do
-		if (m.useModel and m.modelName and m.modelName ~= "" and MSV2.objs[idx]) then
+	for idx, m in pairs(MS.meta) do
+		if (m.useModel and m.modelName and m.modelName ~= "" and MS.objs[idx]) then
 			want[idx] = m
 			total = total + 1
 		end
 	end
 	if (total == 0) then return 0 end
-	written = MSV2.normExport(written)
+	written = MS.normExport(written)
 	local path = tbmPath(written)
-	local text = MSV2.readBytes(path)
+	local text = MS.readBytes(path)
 	if (not text) then return 0, "couldn't read " .. path end
 	local eol = text:find("\r\n", 1, true) and "\r\n" or "\n"
 	local lines, endsNl = splitLines(text)
-	local base = MSV2.modBaseSegs(written)
+	local base = MS.modBaseSegs(written)
 	local out, cur, patched = {}, nil, 0
 	local function closeBlock()
 		if (cur) then
 			table.insert(out, "   use_model 1")
-			table.insert(out, "   model_name " .. MSV2.relativeModelName(cur.modelName, base))
+			table.insert(out, "   model_name " .. MS.relativeModelName(cur.modelName, base))
 			patched = patched + 1
 			cur = nil
 		end
@@ -613,7 +613,7 @@ function MSV2.writeModelLines(written)
 	end
 	closeBlock()
 	local joined = table.concat(out, eol) .. (endsNl and eol or "")
-	if (not MSV2.writeBytes(path, joined)) then return 0, "couldn't write " .. path end
+	if (not MS.writeBytes(path, joined)) then return 0, "couldn't write " .. path end
 	if (patched < total) then
 		return patched, (total - patched) .. " model object(s) weren't found in the exported file"
 	end
@@ -621,10 +621,10 @@ function MSV2.writeModelLines(written)
 end
 
 ---Reads use_model / model_name for every env_obj of a .tbm and stores them on the objects that were just imported
-function MSV2.readModelLines(name)
-	local text = MSV2.readBytes(tbmPath(name))
+function MS.readModelLines(name)
+	local text = MS.readBytes(tbmPath(name))
 	if (not text) then return 0 end
-	local base = MSV2.modBaseSegs(name)
+	local base = MS.modBaseSegs(name)
 	local blocks, cur = {}, nil
 	for raw in text:gmatch("[^\n]+") do
 		local line = raw:gsub("\r$", "")
@@ -641,16 +641,16 @@ function MSV2.readModelLines(name)
 			if (mn) then cur.name = mn end
 		end
 	end
-	local indices = MSV2.sortedKeys(MSV2.objs)
+	local indices = MS.sortedKeys(MS.objs)
 	local byOrder = #indices == #blocks
 	local found = 0
 	for i, b in ipairs(blocks) do
-		local idx = byOrder and indices[i] or (MSV2.objs[b.num] and b.num or nil)
+		local idx = byOrder and indices[i] or (MS.objs[b.num] and b.num or nil)
 		if (idx and b.use and b.name and not b.name:match("^env_obj%d*$")) then
-			local canon = MSV2.resolveModelName(b.name, base) or b.name
-			MSV2.meta[idx] = MSV2.meta[idx] or {}
-			MSV2.meta[idx].useModel = true
-			MSV2.meta[idx].modelName = canon
+			local canon = MS.resolveModelName(b.name, base) or b.name
+			MS.meta[idx] = MS.meta[idx] or {}
+			MS.meta[idx].useModel = true
+			MS.meta[idx].modelName = canon
 			found = found + 1
 		end
 	end
@@ -661,15 +661,15 @@ end
 -- Asset report: everything the mod needs, problems, cached for a few seconds
 ---------------------------------------------------------------------------
 
-MSV2.assetCache = MSV2.assetCache or nil
+MS.assetCache = MS.assetCache or nil
 
 ---{ order = { names }, users, infos, issues = { {severity,text,objs} }, files = { paths }, missing = { paths } }
-function MSV2.assetReport(force)
-	local users, order = MSV2.modelUsers()
+function MS.assetReport(force)
+	local users, order = MS.modelUsers()
 	local key = {}
 	for _, n in ipairs(order) do table.insert(key, n .. "#" .. #users[n]) end
-	key = table.concat(key, "|") .. "|" .. (MSV2.settings.modelDepth or 2)
-	local c = MSV2.assetCache
+	key = table.concat(key, "|") .. "|" .. (MS.settings.modelDepth or 2)
+	local c = MS.assetCache
 	if (c and not force and c.key == key and clock() - c.t < 6) then return c end
 	local rep = { key = key, t = clock(), order = order, users = users, infos = {}, issues = {}, files = {}, missing = {} }
 	local seenFile = {}
@@ -680,11 +680,11 @@ function MSV2.assetReport(force)
 		if (name == "") then
 			add("warn", "with \"Use a 3D model\" on but no model chosen (the game would look for a file called env_obj)", objs)
 		else
-			local bad = MSV2.modelNameProblem(name)
+			local bad = MS.modelNameProblem(name)
 			if (bad) then
 				add("warn", "with a model path that " .. bad .. ": \"" .. name .. "\"", objs)
 			else
-				local info = MSV2.objInfo(name, force)
+				local info = MS.objInfo(name, force)
 				rep.infos[name] = info
 				if (info.missing) then
 					add("warn", "with a 3D model that isn't in data/mod_assets: " .. name .. ".obj. Players need that file too", objs)
@@ -715,13 +715,13 @@ function MSV2.assetReport(force)
 				". Players must have them in data/mod_assets/ - see the Assets section", {})
 		end
 	end
-	MSV2.assetCache = rep
+	MS.assetCache = rep
 	return rep
 end
 
----Issues for MSV2.checkMod
-function MSV2.assetIssues(force)
-	local ok, rep = pcall(MSV2.assetReport, force)
+---Issues for MS.checkMod
+function MS.assetIssues(force)
+	local ok, rep = pcall(MS.assetReport, force)
 	if (ok and rep) then return rep.issues end
 	return {}
 end
@@ -742,9 +742,9 @@ local function stripNote(msg)
 end
 
 ---Adds (or replaces) an asset note at the end of the welcome message. kind: "list" or "download"
-function MSV2.appendAssetNote(kind)
-	local rep = MSV2.assetReport(true)
-	if (#rep.order == 0) then MSV2.toast("No 3D models in use - nothing to mention") return false end
+function MS.appendAssetNote(kind)
+	local rep = MS.assetReport(true)
+	if (#rep.order == 0) then MS.toast("No 3D models in use - nothing to mention") return false end
 	local okm, msg = pcall(get_mod_message)
 	msg = stripNote(okm and msg or "")
 	local names = {}
@@ -758,25 +758,25 @@ function MSV2.appendAssetNote(kind)
 		note = NOTE_A .. table.concat(shown, ", ") .. (#names > 4 and (" +" .. (#names - 4) .. " more") or "") .. " (in data/mod_assets)"
 	end
 	pcall(set_mod_message, (msg ~= "" and (msg .. " ") or "") .. note)
-	MSV2.changed = true
-	MSV2.toast("Added an asset note to the welcome message")
+	MS.changed = true
+	MS.toast("Added an asset note to the welcome message")
 	return true
 end
 
-function MSV2.removeAssetNote()
+function MS.removeAssetNote()
 	local okm, msg = pcall(get_mod_message)
 	if (not okm or not msg) then return end
 	pcall(set_mod_message, stripNote(msg))
-	MSV2.markDirty()
-	MSV2.toast("Removed the asset note from the welcome message")
+	MS.markDirty()
+	MS.toast("Removed the asset note from the welcome message")
 end
 
 ---Writes data/mod/<folder>/<Name>_assets.txt next to the exported mod. Returns path or nil, error.
-function MSV2.writeManifest(written)
-	local rep = MSV2.assetReport(true)
+function MS.writeManifest(written)
+	local rep = MS.assetReport(true)
 	if (#rep.order == 0) then return nil, "no models" end
-	local w = MSV2.normExport(written)
-	local base = MSV2.modBaseSegs(w)
+	local w = MS.normExport(written)
+	local base = MS.modBaseSegs(w)
 	local path = "data/mod/" .. w .. "_assets.txt"
 	local out = {
 		"Mod Studio asset list for " .. w .. ".tbm",
@@ -793,17 +793,17 @@ function MSV2.writeManifest(written)
 	table.insert(out, "")
 	table.insert(out, "Model paths as written in the .tbm (relative to data/mod_assets/" .. table.concat(base, "/") .. "/):")
 	for _, name in ipairs(rep.order) do
-		table.insert(out, "  " .. MSV2.relativeModelName(name, base) .. "   (" .. #rep.users[name] .. " object" .. (#rep.users[name] == 1 and "" or "s") .. ")")
+		table.insert(out, "  " .. MS.relativeModelName(name, base) .. "   (" .. #rep.users[name] .. " object" .. (#rep.users[name] == 1 and "" or "s") .. ")")
 	end
 	table.insert(out, "")
-	if (not MSV2.writeBytes(path, table.concat(out, "\r\n"))) then return nil, "couldn't write " .. path end
+	if (not MS.writeBytes(path, table.concat(out, "\r\n"))) then return nil, "couldn't write " .. path end
 	return path
 end
 
 ---Everything that happens after export_mod_maker succeeded. Returns a short text for the toast.
-function MSV2.afterExport(written)
+function MS.afterExport(written)
 	local parts = {}
-	local ok, patched, err = pcall(MSV2.writeModelLines, written)
+	local ok, patched, err = pcall(MS.writeModelLines, written)
 	if (not ok) then
 		err, patched = patched, 0
 	end
@@ -814,7 +814,7 @@ function MSV2.afterExport(written)
 		table.insert(parts, "model lines: " .. tostring(err))
 		echo("Mod Studio: " .. tostring(err))
 	end
-	local okm, mp = pcall(MSV2.writeManifest, written)
+	local okm, mp = pcall(MS.writeManifest, written)
 	if (okm and mp) then
 		table.insert(parts, "asset list saved")
 	end
@@ -823,12 +823,12 @@ end
 
 ---Copies the files of every used model into data/mod_assets/<folder>/ (never overwriting), then points the
 ---objects at the copies. Returns a list of report lines. The folder must already exist: Lua can't create folders.
-function MSV2.makeAssetPack(folder)
-	local rep = MSV2.assetReport(true)
+function MS.makeAssetPack(folder)
+	local rep = MS.assetReport(true)
 	local log = {}
 	local function say(s) table.insert(log, s) end
 	if (#rep.order == 0) then say("No 3D models in use.") return log end
-	folder = MSV2.safeName(folder or MSV2.saveName or "Untitled")
+	folder = MS.safeName(folder or MS.saveName or "Untitled")
 	local destDir = ROOT .. "/" .. folder
 	local copied, skipped, failed = 0, 0, 0
 	local moved = {}
@@ -846,13 +846,13 @@ function MSV2.makeAssetPack(folder)
 				local convert = true
 				for _, src in ipairs(info.files) do
 					local dst = destDir .. "/" .. baseName(src)
-					local data = MSV2.readBytes(src)
+					local data = MS.readBytes(src)
 					if (not data) then
 						failed = failed + 1
 						convert = false
 						say("Couldn't read " .. src)
 					else
-						local existing = MSV2.readBytes(dst)
+						local existing = MS.readBytes(dst)
 						if (existing) then
 							skipped = skipped + 1
 							if (existing ~= data) then
@@ -861,7 +861,7 @@ function MSV2.makeAssetPack(folder)
 							else
 								say("Skipped " .. baseName(src) .. ": already there")
 							end
-						elseif (MSV2.writeBytes(dst, data)) then
+						elseif (MS.writeBytes(dst, data)) then
 							copied = copied + 1
 						else
 							failed = failed + 1
@@ -877,22 +877,22 @@ function MSV2.makeAssetPack(folder)
 		end
 	end
 	if (next(moved)) then
-		MSV2.withUndo("Make asset pack", function()
+		MS.withUndo("Make asset pack", function()
 			for old, new in pairs(moved) do
-				MSV2.setObjModels(rep.users[old], nil, new)
+				MS.setObjModels(rep.users[old], nil, new)
 			end
 		end)
 		for old, new in pairs(moved) do say("Now using " .. new .. " (was " .. old .. ")") end
 	end
-	MSV2.unloadModels()
-	MSV2.assetCache = nil
-	MSV2.lastPackMoved = MSV2.count(moved)
+	MS.unloadModels()
+	MS.assetCache = nil
+	MS.lastPackMoved = MS.count(moved)
 	table.insert(log, 1, copied .. " file" .. (copied == 1 and "" or "s") .. " copied, " .. skipped .. " skipped (already exist), " .. failed .. " failed")
 	return log
 end
 
 ---True when the game's Lua can read and write binary files (desktop io.open); mobile builds only get the list
-function MSV2.canBinaryCopy()
+function MS.canBinaryCopy()
 	if (is_mobile) then
 		local ok, m = pcall(is_mobile)
 		if (ok and m) then return false end
@@ -900,10 +900,10 @@ function MSV2.canBinaryCopy()
 	return io ~= nil and io.open ~= nil
 end
 
-function MSV2.openAssetsFolder()
+function MS.openAssetsFolder()
 	if (open_file_location) then
 		if (pcall(open_file_location, ROOT)) then return true end
 	end
-	MSV2.toast("Open the folder Toribash/data/mod_assets yourself")
+	MS.toast("Open the folder Toribash/data/mod_assets yourself")
 	return false
 end

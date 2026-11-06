@@ -2,7 +2,7 @@
 -- A friendlier, more powerful mod maker with a 3D move/rotate/scale gizmo,
 -- triangles, parent/child hierarchy, undo/redo, multi-select, generators and project files.
 --
--- Run it in game with:  /ls modstudio.lua      (close it with the X on the panel)
+-- Run it in game with:  /ls modstudio.lua    (close it with the X on the panel)
 -- Files: data/script/modstudio.lua + data/script/modstudio/*.lua
 
 require("toriui.uielement")
@@ -13,6 +13,7 @@ require("system.menu_manager")
 -- Already open: re-attach hooks (another script may have cleared them) and bring the UI back
 if (MS and MS.active and MS.addHooks) then
 	MS.addHooks()
+	if (not MS.testMode) then MS.hideGameHud() end
 	MS.UI.close()
 	MS.UI.open()
 	MS.toast("Mod Studio is already open")
@@ -23,8 +24,11 @@ dofile("modstudio/core.lua")
 dofile("modstudio/hierarchy.lua")
 dofile("modstudio/tools.lua")
 dofile("modstudio/viewport.lua")
+dofile("modstudio/layout.lua")
 dofile("modstudio/ui.lua")
+dofile("modstudio/icons.lua")
 dofile("modstudio/extras.lua")
+dofile("modstudio/models.lua")
 
 local MS = MS
 
@@ -47,11 +51,33 @@ local function closeBuiltinModMaker()
 	end)
 end
 
+---Hides the game's HUD while editing; remembers the player's setting so it can be put back
+function MS.hideGameHud()
+	if (MS.savedHud == nil) then
+		local ok, v = pcall(get_option, "hud")
+		MS.savedHud = (ok and tonumber(v)) or 1
+	end
+	pcall(set_option, "hud", 0)
+end
+
+---Shows the game's HUD (used for test mode)
+function MS.showGameHud()
+	pcall(set_option, "hud", 1)
+end
+
+---Puts the HUD back to whatever the player had before Mod Studio opened
+function MS.restoreGameHud()
+	if (MS.savedHud == nil) then return end
+	pcall(set_option, "hud", MS.savedHud)
+	MS.savedHud = nil
+end
+
 function MS.tick()
 	MS.tickCamera()
 	MS.tickZoom()
 	if (not MS.testMode and not (MS.calib and not MS.calib.done)) then
 		MS.tickRepair()
+		if (MS.tickFace) then pcall(MS.tickFace) end
 		MS.tickWorldMap()
 	end
 	MS.UI.tick()
@@ -75,6 +101,12 @@ function MS.addHooks()
 		local ok, err = pcall(MS.draw3d)
 		if (not ok) then MS.reportError(err) end
 		ok, err = pcall(MS.buildFrame)
+		if (not ok) then MS.reportError(err) end
+	end)
+	-- Floor lines are drawn here: draw_line_3d isn't batched and needs to run after everything else
+	add_hook("post_draw3d", H, function()
+		if (not MS.active or MS.testMode) then return end
+		local ok, err = pcall(MS.drawFloor3d)
 		if (not ok) then MS.reportError(err) end
 	end)
 	add_hook("draw2d", H, function()
@@ -139,6 +171,7 @@ function MS.start()
 	MS.startCalibration()
 	MS.saveName = MS.saveName or "Untitled"
 	MS.addHooks()
+	MS.hideGameHud()
 	MS.UI.open()
 	if (MS.settings.firstRun) then
 		MS.UI.toggleHelp(true)
@@ -162,6 +195,8 @@ function MS.close(force)
 end
 
 function MS.shutdown()
+	-- Release the 3D models loaded for the preview
+	if (MS.unloadModels) then pcall(MS.unloadModels) end
 	-- Editor-only hiding must not stay behind in the mod maker
 	if (MS.revealAllHidden) then pcall(MS.revealAllHidden) end
 	if (MS.changedSinceAutosave and MS.settings.autosave) then
@@ -175,6 +210,7 @@ function MS.shutdown()
 	MS.testMode = false
 	MS.UI.close()
 	remove_hooks(MS.HOOK)
+	MS.restoreGameHud()
 	MS.active = false
 	pcall(enable_mouse_camera_movement)
 	if (modMakerActive()) then

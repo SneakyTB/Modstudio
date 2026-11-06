@@ -3,9 +3,9 @@
 -- files to ship and they scale with the "UI size" setting and follow the theme.
 -- Every icon is drawn into a square of side s centred on (cx, cy).
 
-local MSV2 = MSV2
-MSV2.UI = MSV2.UI or {}
-local UI = MSV2.UI
+local MS = MS
+MS.UI = MS.UI or {}
+local UI = MS.UI
 
 local sin, cos, rad, floor = math.sin, math.cos, math.rad, math.floor
 

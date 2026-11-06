@@ -1,8 +1,8 @@
 # Mod Studio for Toribash
 
-A friendlier, more powerful mod maker for Toribash: a 3D move/rotate/scale gizmo,
-triangles, parent/child hierarchy, undo/redo with a history list, multi-select,
-generators, a built-in .tbm text editor and project files.
+A friendlier, more powerful mod maker for Toribash: a docked panel layout with icons,
+a 3D move/rotate/scale gizmo, triangles, parent/child hierarchy, undo/redo with a history
+list, multi-select, generators, 3D model assets, a built-in .tbm text editor and project files.
 
 ## Install
 
@@ -13,7 +13,15 @@ then run it in game:
 /ls modstudio.lua
 ```
 
-Press **H** in Mod Studio for every shortcut.
+## Using it
+
+- **F1 / F2 / F3 / F4**: Select, Move, Rotate, Scale tools. **F9**: Measure.
+- **H**: help overlay with every shortcut.
+- **Held dragging**: pick up an object with the mouse and scroll to push it nearer or further.
+- **Floor grid**: toggle it from the View options.
+- **Players**: place each player's start position, with "Face the other way" to turn them, and reset them again.
+- **3D model assets**: import model files and textures into your mod (asset pack support in `models.lua`).
+- Exported mods appear in your Mods list under "modmaker".
 
 ## Files
 
@@ -22,10 +30,14 @@ Press **H** in Mod Studio for every shortcut.
 | `modstudio.lua` | Entry point: starts Mod Studio and hooks it into the game |
 | `modstudio/core.lua` | Object cache, selection, undo, triangles, tools, rules, files |
 | `modstudio/hierarchy.lua` | Parent / child hierarchy |
-| `modstudio/tools.lua` | Stick (surface snapping), measure, prefabs, curves, moving obstacles, templates, presets, player placement + dojo |
+| `modstudio/tools.lua` | Stick, measure, prefabs, curves, moving obstacles, templates, presets, player placement |
 | `modstudio/viewport.lua` | 3D gizmo, picking, dragging, camera, shortcuts |
+| `modstudio/layout.lua` | Dock layout maths |
 | `modstudio/ui.lua` | Panels, toolbar, status line, help, theme |
+| `modstudio/icons.lua` | Icon set used throughout the UI |
 | `modstudio/extras.lua` | TBM editor, undo history, hide/isolate, copy/paste properties |
+| `modstudio/models.lua` | 3D model files and textures |
 
-Projects are saved to `data/script/modstudio/projects/` and settings to
-`data/script/modstudio/settings.cfg` (both created as you use it).
+Projects (`.msp`) are saved to `data/script/modstudio/projects/`, prefabs (`.msf`) to
+`data/script/modstudio/prefabs/` and settings to `data/script/modstudio/settings.cfg`.
+Projects made with the older version open as-is (same file format).
