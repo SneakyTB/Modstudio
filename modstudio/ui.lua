@@ -203,11 +203,12 @@ function UI.fitFrac(str, avail, role, font)
 	return math.min(1, avail / (tw * top))
 end
 
----Shared scale for a group: the smallest fit, never below `floor` (default UI.FIT_MIN)
+---Shared scale for a group: the smallest fit, never below `floor` (default UI.ICON_MIN, the
+---smallest a button label gets, so a button group never ends up bigger than its tightest label)
 function UI.groupFrac(fracs, floor)
 	local m = 1
 	for _, f in ipairs(fracs) do if (f < m) then m = f end end
-	return math.max(floor or UI.FIT_MIN, m)
+	return math.max(floor or UI.ICON_MIN or 0.6, m)
 end
 
 ---Draw text in `el`. One-line text shrinks to fit its width (down to UI.FIT_MIN of the role size),
@@ -224,8 +225,9 @@ function UI.addText(el, override, str, x, y, font, align, role, frac)
 	local tallBox = override or (el.size and el.size.h and el.size.h >= ROW * 1.6)
 	-- One-line text is checked by width only: uiText's own check also fails when a line is taller
 	-- than the box, which is always true for the big heading font and cut headings to one letter.
-	local xoff = (type(x) == "table") and ((tonumber(x[1]) or 0) + (tonumber(x[2]) or 0)) or ((tonumber(x) or 0) * 2)
-	local avail = ((el.size and el.size.w) or 0) - xoff - 2
+	-- Same text area toriui uses: width minus the left offset (x) and right offset (x2)
+	local xoff = (type(x) == "table") and ((tonumber(x[1]) or 0) + (tonumber(x[2]) or 0)) or (tonumber(x) or 0)
+	local avail = ((el.size and el.size.w) or 0) - xoff - 4
 	local function fits(t, s)
 		if (avail <= 0) then return true end
 		local tw = UI.textWidth(t, font)
@@ -320,30 +322,36 @@ UI.LABEL_ICONS = {
 	["Grid on"] = "grid", ["Grid off"] = "grid", ["Scale whole player"] = "scale", ["Put at midpoint"] = "move",
 }
 
----Which icon a button of this size keeps, and the fraction of the role size its label fits at.
----The icon is dropped when the label would have to shrink below UI.FIT_MIN beside it (same
----measurement as UI.addText, accounting for the label offset the button reserves for the icon).
+---Smallest label size (fraction of the role size) a button keeps beside its icon
+UI.ICON_MIN = 0.6
+
+---How a button of this size shows itself: icon, fraction of the role size for its label, and whether
+---the label is shown at all. In order of preference:
+---  1. icon + label, label at >= UI.ICON_MIN beside the icon
+---  2. label alone at >= UI.FIT_MIN
+---  3. icon alone (the label becomes the tooltip) when there is an icon
+---  4. label alone, cut with "..."
+---Uses the same width measurement as UI.addText (text area = width - left offset - 4).
 function UI.buttonFit(w, h, text, o)
 	local hasText = text and text ~= ""
 	local icon = o.icon
 	if (not icon and hasText and not o.noAutoIcon) then icon = UI.LABEL_ICONS[text] end
-	if (not hasText) then return icon, 1 end
+	if (not hasText) then return icon, 1, false end
 	local role = o.scale or "body"
-	local function availFor(withIcon)
-		local shift = withIcon and (h + 2) or (o.align == LEFTMID and 6 or 0)
-		return w - shift * 2 - 2
-	end
-	if (icon and UI.fitFrac(text, availFor(true), role, 4) < UI.FIT_MIN) then icon = nil end
-	return icon, UI.fitFrac(text, availFor(icon ~= nil), role, 4)
+	local withIcon = UI.fitFrac(text, w - (h + 2) - 4, role, 4)
+	if (icon and withIcon >= UI.ICON_MIN) then return icon, withIcon, true end
+	local alone = UI.fitFrac(text, w - (o.align == LEFTMID and 6 or 0) - 4, role, 4)
+	if (alone >= UI.FIT_MIN or not icon) then return nil, alone, true end
+	return icon, 1, false
 end
 
----Appends to `fracs` the label fit of every button in `items` when each is `w` x `h`
+---Appends to `fracs` the label fit of every button in `items` (that shows a label) when each is `w` x `h`
 local function rowFracs(w, h, items, fracs)
 	fracs = fracs or {}
 	for _, it in ipairs(items) do
 		if (it[1] and it[1] ~= "") then
-			local _, f = UI.buttonFit(w, h, it[1], { icon = it.icon, scale = it.scale })
-			table.insert(fracs, f)
+			local _, f, shown = UI.buttonFit(w, h, it[1], { icon = it.icon, scale = it.scale })
+			if (shown) then table.insert(fracs, f) end
 		end
 	end
 	return fracs
@@ -365,21 +373,24 @@ local function button(parent, x, y, w, h, text, onClick, o)
 		inactiveColor = C.darkest
 	})
 	local hasText = text and text ~= ""
-	-- Icon + label only when the label fits beside the icon at no less than UI.FIT_MIN; otherwise the label wins
-	local icon = UI.buttonFit(w, h, text, o)
+	local icon, ownFit, showText = UI.buttonFit(w, h, text, o)
 	if (icon) then
-		UI.addIcon(b, icon, { bg = bg, disabled = o.disabled, dim = o.iconDim, box = hasText and { 2, 0, h, h } or nil })
+		UI.addIcon(b, icon, { bg = bg, disabled = o.disabled, dim = o.iconDim, box = showText and { 2, 0, h, h } or nil })
 	end
-	if (hasText) then
+	if (showText) then
 		local shift = o.align == LEFTMID and 6 or nil
 		if (icon) then shift = h + 2 end
-		UI.addText(b, false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), o.scale or "body", o.fit)
+		-- A group scale never makes this label bigger than it fits at by itself
+		local fit = o.fit and math.min(o.fit, ownFit) or nil
+		UI.addText(b, false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), o.scale or "body", fit)
 	end
 	if (onClick and not o.disabled) then
 		b:addMouseHandlers(nil, function() onClick() end)
 	end
-	if (o.tip) then
-		b:addMouseHandlers(nil, nil, function() UI.setTip(o.tip, b) end)
+	-- Icon-only buttons show their label as the tooltip
+	local tip = o.tip or ((hasText and not showText) and text or nil)
+	if (tip) then
+		b:addMouseHandlers(nil, nil, function() UI.setTip(tip, b) end)
 	end
 	return b
 end
