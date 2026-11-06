@@ -567,6 +567,9 @@ function MS.drawModels(live)
 						end
 					end
 					R = R or MS.objRot(idx)
+					-- Same call sequence as toriui/uielement3d.lua (set_color, then draw_obj_m): the engine's load_obj loads the
+					-- model's textures (<name>.tga next to the .obj) itself; there is no Lua call to bind one, so the colour
+					-- here is the only thing that can tint it (white = texture as is).
 					set_color(o.color_r or 1, o.color_g or 1, o.color_b or 1, o.color_a or 1)
 					local ok = pcall(draw_obj_m, slot, x, y, z, s[1], s[2], s[3], rotTB(R))
 					if (not ok) then

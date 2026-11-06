@@ -1565,6 +1565,10 @@ function MS.draw2d()
 	local F = MS.frame
 	if (not F) then return end
 	MS.applyViewColors()
+	-- Help window / dialogs sit above the 3D view: this hook runs before toriui draws them, so anything drawn
+	-- here would show through (outlines, gizmo and labels over the white help panel). Draw no overlays then.
+	local UIm = MS.UI
+	if (UIm and (UIm.modalOpen or (UIm.help and not UIm.help.destroyed) or (UIm.dialog and not UIm.dialog.destroyed))) then return end
 	local ow, gw = outlineW(), gizmoW()
 	local cx0, cy0, cx1, cy1 = MS.viewportRect()
 	CLIP = { cx0, cy0, cx1, cy1 }
