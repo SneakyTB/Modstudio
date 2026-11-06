@@ -2851,7 +2851,7 @@ function MS.exportMod(name)
 	MS.flush(true)
 	if (MS.settings.assetNote and MS.appendAssetNote and MS.assetReport) then
 		local rep = MS.assetReport(true)
-		if (#rep.order > 0) then pcall(MS.appendAssetNote, "list") end
+		if (#rep.order > 0) then pcall(MS.appendAssetNote, "download") end
 	end
 	local ok, written = pcall(export_mod_maker, name)
 	if (ok and written) then
@@ -2920,6 +2920,9 @@ local function readRotTable(i)
 		{ r[8], r[9], r[10] }
 	}
 end
+
+---Rotation of a live game object as a 3x3 matrix (nil when the game won't say). Models use it in test mode.
+MS.readEngineRot = readRotTable
 
 local function matErr(a, b)
 	local e = 0

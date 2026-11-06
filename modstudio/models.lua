@@ -153,27 +153,45 @@ local function isFolder(path)
 	return false
 end
 
-function MS.scanModels(force)
-	if (MS.modelList and not force and clock() - MS.modelListTime < 60) then return MS.modelList end
-	local out = {}
-	local seen = 0
+---Every .obj under data/mod_assets as "folder/name" (no extension), sorted. Cheap: only directory listings.
+local function listObjFiles()
+	local out, seen, visited = {}, 0, {}
 	local function walk(dir, rel, depth)
-		if (depth > 6 or seen > 3000) then return end
+		if (depth > 6 or seen > 3000 or visited[dir]) then return end
+		visited[dir] = true
 		local ok, files = pcall(get_files, dir, "")
-		if (not ok or type(files) ~= "table") then return end
-		for _, v in pairs(files) do
-			if (type(v) == "string" and v ~= "." and v ~= "..") then
-				seen = seen + 1
-				if (v:lower():match("%.obj$")) then
-					table.insert(out, rel .. v:sub(1, -5))
-				elseif (not v:match("%.%w+$") or isFolder(dir .. "/" .. v)) then
-					walk(dir .. "/" .. v, rel .. v .. "/", depth + 1)
+		local subs = {}
+		if (ok and type(files) == "table") then
+			for _, v in pairs(files) do
+				if (type(v) == "string" and v ~= "." and v ~= "..") then
+					seen = seen + 1
+					if (v:lower():match("%.obj$")) then
+						table.insert(out, rel .. v:sub(1, -5))
+					elseif (not v:match("%.%w+$") or isFolder(dir .. "/" .. v)) then
+						subs[v] = true
+					end
 				end
 			end
 		end
+		-- The game can list folders directly; this also finds folders get_files leaves out
+		if (get_folders) then
+			local okf, folders = pcall(get_folders, dir)
+			if (okf and type(folders) == "table") then
+				for _, v in pairs(folders) do
+					if (type(v) == "string" and v ~= "." and v ~= "..") then subs[v] = true end
+				end
+			end
+		end
+		for v in pairs(subs) do walk(dir .. "/" .. v, rel .. v .. "/", depth + 1) end
 	end
 	walk(ROOT, "", 0)
 	table.sort(out, function(a, b) return a:lower() < b:lower() end)
+	return out
+end
+
+function MS.scanModels(force)
+	if (MS.modelList and not force and clock() - MS.modelListTime < 60) then return MS.modelList end
+	local out = listObjFiles()
 	MS.modelList, MS.modelListTime = out, clock()
 	return out
 end
@@ -435,9 +453,69 @@ function MS.modelScale(idx)
 	return { (x or 1) * k, (y or x or 1) * k, (z or x or 1) * k }
 end
 
----Called from the draw3d hook every frame
-function MS.drawModels()
+---------------------------------------------------------------------------
+-- Test mode: the game's objects move with physics, so models follow the LIVE objects.
+-- Which game object is which mod object is found by position + size on the first test frames
+-- (the n-th game object is normally the n-th mod object).
+---------------------------------------------------------------------------
+
+local function testPosNear(i, o)
+	local ok, x, y, z = pcall(get_obj_pos, i)
+	return ok and type(x) == "number" and abs(x - (o.pos_x or 0)) < 0.1 and abs(y - (o.pos_y or 0)) < 0.1 and abs(z - (o.pos_z or 0)) < 0.1
+end
+
+local function testSidesNear(i, o)
+	local ok, a, b, c = pcall(get_obj_sides, i)
+	if (not ok or type(a) ~= "number") then return true end
+	local function near(x, y) return abs(x - y) < 0.02 * max(1, abs(y)) end
+	if (o.type == 0) then return near(a, o.dims_x or 0.5) end
+	if (o.type == 2) then return near(a, o.dims_x or 0.3) and near(b or 0, o.dims_y or 1) end
+	return near(a, o.dims_x or 1) and near(b or 0, o.dims_y or 1) and near(c or 0, o.dims_z or 1)
+end
+
+local function buildTestMap(T)
+	local okl, list = pcall(MS.activeObjIndices)
+	if (not okl or type(list) ~= "table") then list = {} end
+	local order = {}
+	for k, idx in ipairs(list) do order[idx] = k - 1 end
+	local claimed = {}
+	for _, w in pairs(T.map) do claimed[w] = true end
+	for idx, m in pairs(MS.meta) do
+		local o = MS.objs[idx]
+		if (m.useModel and m.modelName and m.modelName ~= "" and o and T.map[idx] == nil) then
+			local function fits(i) return not claimed[i] and testPosNear(i, o) and testSidesNear(i, o) end
+			local w = order[idx]
+			if (w == nil or not fits(w)) then
+				w = nil
+				for i = 0, #list + 8 do
+					if (fits(i)) then w = i break end
+				end
+			end
+			if (w ~= nil) then
+				T.map[idx] = w
+				claimed[w] = true
+			end
+		end
+	end
+end
+
+---Called from the draw3d hook every frame. live = true in test mode.
+function MS.drawModels(live)
 	if (not MS.settings.modelPreview or not draw_obj_m) then return end
+	local T
+	if (live) then
+		T = MS.testModels
+		if (not T) then
+			T = { frames = 0, map = {}, hidden = {} }
+			MS.testModels = T
+		end
+		if (T.frames < 6) then
+			T.frames = T.frames + 1
+			pcall(buildTestMap, T)
+		end
+	else
+		MS.testModels = nil
+	end
 	for idx, m in pairs(MS.meta) do
 		if (m.useModel and m.modelName and m.modelName ~= "") then
 			local o = MS.objs[idx]
@@ -445,9 +523,23 @@ function MS.drawModels()
 				local slot = MS.modelSlot(m.modelName)
 				if (slot) then
 					local s = MS.modelScale(idx)
-					local R = MS.objRot(idx)
+					local x, y, z, R = o.pos_x or 0, o.pos_y or 0, o.pos_z or 0, nil
+					if (T and T.map[idx] ~= nil) then
+						local w = T.map[idx]
+						local okp, px, py, pz = pcall(get_obj_pos, w)
+						if (okp and type(px) == "number") then
+							x, y, z = px, py, pz
+							R = MS.readEngineRot and MS.readEngineRot(w) or nil
+						end
+						-- The game draws the model instead of the plain shape: hide the shape (live object only)
+						if (not T.hidden[idx]) then
+							T.hidden[idx] = true
+							pcall(set_obj_color, w, o.color_r or 1, o.color_g or 1, o.color_b or 1, 0)
+						end
+					end
+					R = R or MS.objRot(idx)
 					set_color(o.color_r or 1, o.color_g or 1, o.color_b or 1, o.color_a or 1)
-					local ok = pcall(draw_obj_m, slot, o.pos_x or 0, o.pos_y or 0, o.pos_z or 0, s[1], s[2], s[3], rotTB(R))
+					local ok = pcall(draw_obj_m, slot, x, y, z, s[1], s[2], s[3], rotTB(R))
 					if (not ok) then
 						MS.modelProblem = true
 						MS.toast("Model preview isn't supported by this game version")
@@ -496,43 +588,236 @@ function MS.setModelScale(list, k)
 			n = n + 1
 		end
 	end
+	-- A fitted hitbox follows the new size
+	for _, idx in ipairs(list) do
+		if (n > 0 and MS.modelHitbox(idx)) then MS.modelRefitHitbox(idx) end
+	end
 	return n
 end
 
----Adds an invisible static box exactly around the drawn model (parented to the object) - one undo step.
+---True when the model is about 1 unit big, so the object's own box (sides 1 1 1) already fits it
+function MS.modelIsUnit(idx)
+	local m = MS.meta[idx]
+	local info = m and m.modelName and MS.objInfo(m.modelName)
+	if (not info or not info.ext) then return false end
+	return abs(info.ext[1] - 1) < 0.15 and abs(info.ext[2] - 1) < 0.15 and abs(info.ext[3] - 1) < 0.15
+end
+
+---The fitted hitbox object that belongs to a model object (or nil)
+function MS.modelHitbox(idx)
+	for j, mj in pairs(MS.meta) do
+		if (mj.hitboxFor == idx and MS.objs[j]) then return j end
+	end
+	return nil
+end
+
+local function hitboxFields(idx, box)
+	local e = box.ext
+	local rx, ry, rz = M.toEuler(box.R)
+	return {
+		pos_x = box.center[1], pos_y = box.center[2], pos_z = box.center[3],
+		rot_x = rx, rot_y = ry, rot_z = rz,
+		dims_x = max(0.01, e[1]), dims_y = max(0.01, e[2]), dims_z = max(0.01, e[3])
+	}
+end
+
+---Re-fits an existing hitbox to the model (after a size change)
+function MS.modelRefitHitbox(idx)
+	local h = MS.modelHitbox(idx)
+	local box = MS.modelWorldBox(idx)
+	if (not h or not box) then return end
+	for f, v in pairs(hitboxFields(idx, box)) do MS.objSet(h, f, v) end
+end
+
+---Deletes the fitted hitbox of a model object. Returns true when one was removed.
+function MS.modelRemoveHitbox(idx)
+	local h = MS.modelHitbox(idx)
+	if (not h) then return false end
+	if (MS.hierBeforeDelete) then
+		local key = MS.nodeKey(h)
+		if (key) then pcall(MS.hierBeforeDelete, { [key] = true }) end
+	end
+	MS.deleteObjRaw(h)
+	if (MS.hierFix) then MS.hierFix() end
+	return true
+end
+
+---Adds an invisible static box exactly around the drawn model (child of the object) - one undo step.
 ---The model is scaled by the object's own size, so the object's own box can't also be the model's hitbox
----unless the model is about 1 unit big (then nothing needs adding).
-function MS.modelAddHitbox(idx)
+---unless the model is about 1 unit big (then nothing needs adding). quiet: no toasts, keep the selection.
+function MS.modelAddHitbox(idx, quiet)
 	local box, why = MS.modelWorldBox(idx)
-	if (not box) then MS.toast(why) return nil end
+	if (not box) then if (not quiet) then MS.toast(why) end return nil end
 	local e, o = box.ext, MS.objs[idx]
-	local info = box.info
-	local unit = abs(info.ext[1] - 1) < 0.15 and abs(info.ext[2] - 1) < 0.15 and abs(info.ext[3] - 1) < 0.15
-	if (unit) then
-		MS.toast("This model is about 1 unit big, so the object's own box already fits it - just set the object's size")
+	if (MS.modelHitbox(idx)) then
+		MS.withUndo("Refit hitbox", function() MS.modelRefitHitbox(idx) end)
+		if (not quiet) then MS.toast("The hitbox was refitted to the model") end
+		return MS.modelHitbox(idx)
+	end
+	if (MS.modelIsUnit(idx)) then
+		if (not quiet) then MS.toast("This model is about 1 unit big, so the object's own box already fits it - just set the object's size") end
 		return nil
 	end
 	local newIdx
 	MS.withUndo("Fit hitbox to model", function()
-		local rx, ry, rz = M.toEuler(box.R)
-		local f = {
-			type = 1, pos_x = box.center[1], pos_y = box.center[2], pos_z = box.center[3],
-			rot_x = rx, rot_y = ry, rot_z = rz,
-			dims_x = max(0.01, e[1]), dims_y = max(0.01, e[2]), dims_z = max(0.01, e[3]),
-			static = o.static, visible = false, color_r = 0.2, color_g = 0.8, color_b = 1, color_a = 0.3,
-			friction = o.friction, bounce = o.bounce, hardness = o.hardness, mass = o.mass or 1
-		}
-		newIdx = MS.createObj(f, { name = MS.objName(idx) .. " hitbox" })
+		local f = hitboxFields(idx, box)
+		f.type = 1
+		f.static, f.visible, f.color_r, f.color_g, f.color_b, f.color_a = o.static, false, 0.2, 0.8, 1, 0.3
+		f.friction, f.bounce, f.hardness, f.mass = o.friction, o.bounce, o.hardness, o.mass or 1
+		newIdx = MS.createObj(f, { name = MS.objName(idx) .. " hitbox", hitboxFor = idx })
 		if (newIdx) then
 			local pk, ck = MS.nodeKey(idx), MS.nodeKey(newIdx)
 			if (pk and ck and MS.setParent) then MS.setParent({ ck }, pk) end
 		end
 	end)
-	if (newIdx) then
+	if (newIdx and not quiet) then
 		MS.selSet(newIdx)
 		MS.toast("Added an invisible hitbox " .. MS.fmt(e[1]) .. " x " .. MS.fmt(e[2]) .. " x " .. MS.fmt(e[3]) .. " around the model (child of the object)")
 	end
 	return newIdx
+end
+
+---------------------------------------------------------------------------
+-- Adding / swapping / removing models on objects
+---------------------------------------------------------------------------
+
+---One undo step: a static object at the spawn point showing the model at its original size (object sides 1 1 1),
+---with the fitted invisible hitbox. Selects the new object.
+function MS.addModelToScene(name)
+	name = MS.cleanModelName(name)
+	local bad = MS.modelNameProblem(name)
+	if (bad) then MS.toast("Can't use \"" .. name .. "\": it " .. bad) return nil end
+	local info = MS.objInfo(name, true)
+	if (info.missing) then MS.toast("That model file is gone: " .. info.path) return nil end
+	local short = baseName(name)
+	local newIdx
+	MS.withUndo("Add " .. short, function()
+		local p = MS.spawnPoint()
+		-- Model origin sits at the object's position: lift it so the model's lowest point touches the floor
+		local z = info.min and -info.min[3] or 0.5
+		newIdx = MS.createObj({
+			type = 1, pos_x = p[1], pos_y = p[2], pos_z = z, dims_x = 1, dims_y = 1, dims_z = 1,
+			static = true, color_r = 1, color_g = 1, color_b = 1, color_a = 1, mass = 1
+		}, { name = short, useModel = true, modelName = name })
+		if (newIdx) then MS.modelAddHitbox(newIdx, true) end
+	end)
+	if (not newIdx) then return nil end
+	MS.selSet(newIdx)
+	MS.toast("Added " .. short)
+	return newIdx
+end
+
+---Swaps the model of the given objects (one undo step)
+function MS.useModelOn(list, name)
+	name = MS.cleanModelName(name)
+	if (#list == 0) then MS.toast("Select an object first") return false end
+	MS.withUndo("Change model", function()
+		MS.setObjModels(list, true, name)
+		for _, idx in ipairs(list) do
+			if (MS.modelHitbox(idx)) then MS.modelRefitHitbox(idx) end
+		end
+	end)
+	MS.toast("Now using " .. baseName(name))
+	return true
+end
+
+---Takes the model (and its fitted hitbox) off the given objects (one undo step)
+function MS.removeModelFrom(list)
+	if (#list == 0) then return end
+	MS.withUndo("Remove model", function()
+		for _, idx in ipairs(list) do MS.modelRemoveHitbox(idx) end
+		MS.setObjModels(list, false, "")
+	end)
+	MS.toast("Model removed")
+end
+
+---------------------------------------------------------------------------
+-- Live model library (the Models tab): data/mod_assets is re-listed every ~2 s while the tab is open.
+-- A listing is cheap; an .obj is only parsed again when it is new or its file size changed
+-- (get_files gives no timestamps, so the size is the change signal).
+---------------------------------------------------------------------------
+
+MS.lib = MS.lib or { entries = {}, byName = {}, t = -100, rev = 0 }
+local LIB_PARSES_PER_POLL = 3
+
+local function fileSize(path)
+	local f = openRoot(path, "rb")
+	if (not f) then return nil end
+	local ok, n = pcall(f.seek, f, "end")
+	f:close()
+	return ok and tonumber(n) or nil
+end
+
+---Is a texture for model `name` there now (<stem>.tga / .png next to it)?
+local function textureNow(name)
+	local dir = dirName(name)
+	local prefix = ROOT .. "/" .. (dir ~= "" and (dir .. "/") or "")
+	local stem = baseName(name)
+	return MS.fileExists(prefix .. stem .. ".tga") or MS.fileExists(prefix .. stem .. ".png")
+end
+
+---Looks at data/mod_assets again. Returns true when the list or something in it changed.
+---force skips the 2 second wait.
+function MS.libPoll(force)
+	local L = MS.lib
+	local now = clock()
+	if (not force and now - L.t < 2) then return false end
+	L.t = now
+	local names = listObjFiles()
+	local changed = false
+	local parsed = 0
+	local entries, byName = {}, {}
+	for _, n in ipairs(names) do
+		local size = fileSize(ROOT .. "/" .. n .. ".obj")
+		local e = L.byName[n]
+		local reparse = false
+		if (not e or e.size ~= size or e.pending) then
+			reparse = true
+		elseif (e.info and e.info.hasUV and not e.info.hasTexture and textureNow(n)) then
+			reparse = true -- the texture arrived after the model
+		end
+		if (reparse) then
+			if (parsed < LIB_PARSES_PER_POLL) then
+				parsed = parsed + 1
+				if (e and e.info and e.size ~= size) then
+					-- A model that is loaded for the preview must be loaded again
+					pcall(MS.unloadModels, n)
+				end
+				local info = MS.objInfo(n, true)
+				e = { name = n, size = size, info = info, folder = dirName(n), base = baseName(n) }
+				MS.assetCache = nil
+			elseif (not e) then
+				e = { name = n, size = size, pending = true, folder = dirName(n), base = baseName(n) }
+			end
+			changed = true
+		end
+		entries[#entries + 1] = e
+		byName[n] = e
+	end
+	if (not changed and #entries ~= #L.entries) then changed = true end
+	L.entries, L.byName = entries, byName
+	if (changed) then
+		L.rev = L.rev + 1
+		MS.modelList, MS.modelListTime = names, now
+	end
+	return changed
+end
+
+---One line about a library entry: size and texture state
+function MS.libInfoLine(e)
+	local info = e.info
+	if (not info) then return "reading..." end
+	local parts = {}
+	if (info.ext) then
+		table.insert(parts, MS.fmt(info.ext[1]) .. " x " .. MS.fmt(info.ext[2]) .. " x " .. MS.fmt(info.ext[3]))
+	else
+		table.insert(parts, "no shape found")
+	end
+	if (info.textureMissing) then table.insert(parts, "texture MISSING")
+	elseif (info.hasTexture) then table.insert(parts, "texture ok")
+	elseif (info.hasUV) then table.insert(parts, "no texture (" .. e.base .. ".tga)")
+	else table.insert(parts, "no texture needed") end
+	return table.concat(parts, "  |  ")
 end
 
 ---------------------------------------------------------------------------

@@ -95,7 +95,12 @@ end
 function MS.addHooks()
 	local H = MS.HOOK
 	add_hook("draw3d", H, function()
-		if (not MS.active or MS.testMode) then return end
+		if (not MS.active) then return end
+		if (MS.testMode) then
+			-- Test mode: the game draws the world, Mod Studio only adds the 3D models on the live objects
+			if (MS.drawModels) then pcall(MS.drawModels, true) end
+			return
+		end
 		MS.calibrateStep()
 		MS.flush()
 		local ok, err = pcall(MS.draw3d)

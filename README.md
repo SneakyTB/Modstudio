@@ -20,7 +20,7 @@ then run it in game:
 - **Held dragging**: pick up an object with the mouse and scroll to push it nearer or further.
 - **Floor grid**: toggle it from the View options.
 - **Players**: place each player's start position, with "Face the other way" to turn them, and reset them again.
-- **3D model assets**: import model files and textures into your mod (asset pack support in `models.lua`).
+- **3D model assets**: the Models tab lists every .obj in data/mod_assets (rescanned live) and adds one with a click; models follow the live objects in Test mode; asset pack support in `models.lua`.
 - Exported mods appear in your Mods list under "modmaker".
 
 ## Files

@@ -143,6 +143,25 @@ function UI.fieldFocused()
 	return false
 end
 
+---Killing a text field that isn't focused leaves it in the game's global UIKeyboardHandler list (the engine only
+---removes elements whose `keyboard` flag is set). Every panel rebuild left a few hundred dead fields behind, and
+---every key press, key release, text input and mouse click walks - and copies - that whole list, so typing got
+---slower the longer Mod Studio had been open. Drop the dead entries (in place: the list is shared).
+function UI.purgeKeyboardHandlers()
+	local list = UIKeyboardHandler
+	if (type(list) ~= "table") then return 0 end
+	local n, j = #list, 0
+	for i = 1, n do
+		local v = list[i]
+		if (v and not v.destroyed) then
+			j = j + 1
+			list[j] = v
+		end
+	end
+	for i = j + 1, n do list[i] = nil end
+	return n - j
+end
+
 function UI.blurFields()
 	for _, v in ipairs(UIKeyboardHandler or {}) do
 		if (v.textfield) then
@@ -1289,9 +1308,7 @@ end
 ---------------------------------------------------------------------------
 
 UI.modelFilter = UI.modelFilter or ""
-UI.modelPage = UI.modelPage or 1
 UI.assetLog = UI.assetLog or {}
-local MODEL_ROWS = 5
 
 ---Objects that can carry a model: everything selected except triangle slices
 local function modelTargets()
@@ -1303,187 +1320,160 @@ local function modelTargets()
 	return list
 end
 
-local function applyModel(use, name, title, key)
-	local list = modelTargets()
-	if (#list == 0) then
-		MS.toast("Select an object first")
-		return
-	end
-	MS.pushUndo(title or "3D model", key)
-	MS.setObjModels(list, use, name)
-end
-
-local function modelStatus()
-	local use, name = MS.objModel(MS.primary)
-	if (name == "") then
-		return use and "Pick a model from the list, or type its path above." or "No model. Turn on \"Use a 3D model\", then pick a file."
-	end
-	local bad = MS.modelNameProblem(name)
-	if (bad) then return "(!) The path " .. bad end
-	local info = MS.objInfo(name)
-	if (info.missing) then return "(!) Not found: data/mod_assets/" .. name .. ".obj" end
-	local txt = {}
-	if (info.ext) then
-		table.insert(txt, "Model is " .. MS.fmt(info.ext[1]) .. " x " .. MS.fmt(info.ext[2]) .. " x " .. MS.fmt(info.ext[3]) .. " (x, y, z) at scale 1.")
-	end
-	if (info.textureMissing) then
-		table.insert(txt, "(!) A texture named by its .mtl is missing.")
-	elseif (info.hasTexture) then
-		table.insert(txt, "Texture found.")
-	elseif (info.hasUV) then
-		table.insert(txt, "(!) No texture (" .. name:match("([^/]*)$") .. ".tga) next to it.")
-	else
-		table.insert(txt, "No texture needed.")
-	end
-	local rel = MS.relativeModelName(name, MS.modBaseSegs(MS.lastExport))
-	table.insert(txt, "Written as model_name " .. rel)
-	return table.concat(txt, " ")
-end
-
+---Properties > 3D model: which model, change / remove, size, solid
 local function objModelEntries()
 	if (MS.selSingleTri()) then
 		return { { kind = "hint", rows = 2, label = "Triangles are built from many boxes, so they can't carry one model. Give a single box or ball a 3D model instead." } }
 	end
+	local use, name = MS.objModel(MS.primary)
+	local has = use and name ~= ""
 	local entries = {
-		{ kind = "hint", rows = 3, scale = "small", label = "Gives the object a 3D model (.obj from data/mod_assets). The game draws it at the object's position and turns and stretches it with the object's rotation and size. The object's box is still its hitbox." },
-		{ kind = "toggle", label = "Use a 3D model", tip = "Writes use_model 1 and model_name into the exported mod. Players need the .obj (and its .tga texture) in data/mod_assets",
-			get = function() local u = MS.objModel(MS.primary); return u end,
-			set = function(v) applyModel(v, nil, "3D model on/off") end },
-		{ kind = "text", label = "Model", placeholder = "folder/name  (no .obj)",
-			get = function() local _, n = MS.objModel(MS.primary); return n end,
-			set = function(s)
-				local _, cur = MS.objModel(MS.primary)
-				if (MS.cleanModelName(s) == cur) then return end
-				applyModel(MS.cleanModelName(s) ~= "" and true or nil, s, "3D model path", "model:name")
-			end },
-		{ kind = "hint", rows = 3, scale = "small", label = modelStatus() }
+		{ kind = "hint", rows = 1, scale = "body", label = "Model: " .. (has and name or "None") }
 	}
-
-	-- Picker
-	local all = MS.scanModels(false)
-	local q = (UI.modelFilter or ""):lower()
-	local shown = {}
-	for _, n in ipairs(all) do
-		if (q == "" or n:lower():find(q, 1, true)) then table.insert(shown, n) end
+	if (has) then
+		local bad = MS.modelNameProblem(name)
+		local info = not bad and MS.objInfo(name) or nil
+		local warn
+		if (bad) then warn = "(!) The model name " .. bad
+		elseif (info.missing) then warn = "(!) File not found: data/mod_assets/" .. name .. ".obj"
+		elseif (info.textureMissing or (info.hasUV and not info.hasTexture)) then warn = "(!) This model has no texture next to it, so it will look plain." end
+		if (warn) then table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = warn }) end
+	else
+		table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = "No 3D model. Open the Models tab and click one to add it, or choose one for this object." })
 	end
-	local pages = math.max(1, math.ceil(#shown / MODEL_ROWS))
-	UI.modelPage = MS.clamp(UI.modelPage or 1, 1, pages)
-	local _, current = MS.objModel(MS.primary)
-
-	table.insert(entries, { kind = "custom", render = function(holder, y, w)
-		local bw = floor(w * 0.3)
-		label(holder, 4, y, w - bw * 2 - GAP, ROW, "Files in data/mod_assets (" .. #all .. ")", LEFTMID, "body")
-		button(holder, w - bw * 2 - GAP, y, bw, ROW, "Refresh", function()
-			MS.scanModels(true)
-			MS.objCache = {}
-			MS.assetCache = nil
-			MS.unloadModels()
-			UI.requestRefresh()
-			MS.toast("Looked for models again")
-		end, { icon = "undo", scale = "body", tip = "Look in data/mod_assets again (after adding files) and reload previews" })
-		button(holder, w - bw, y, bw, ROW, "Folder", function() MS.openAssetsFolder() end,
-			{ icon = "folder", scale = "body", tip = "Open Toribash/data/mod_assets in your file browser" })
-	end })
-	table.insert(entries, { kind = "custom", render = function(holder, y, w)
-		field(holder, 0, y, w, ROW, UI.modelFilter, { align = LEFTMID, placeholder = "Filter models, then Enter", enter = function() UI.blurFields() end }, function(s)
-			UI.modelFilter = s
-			UI.modelPage = 1
-			UI.filterDirty = true
-		end)
-	end })
-	if (#all == 0) then
-		table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = "No .obj files found in data/mod_assets. Put models there (e.g. data/mod_assets/mymod/rock.obj + rock.tga), then press Refresh." })
-	elseif (#shown == 0) then
-		table.insert(entries, { kind = "hint", rows = 1, label = "No model matches the filter." })
-	end
-	for r = 1, MODEL_ROWS do
-		local n = shown[(UI.modelPage - 1) * MODEL_ROWS + r]
-		if (n) then
-			table.insert(entries, { kind = "custom", render = function(holder, y, w)
-				button(holder, 0, y, w, ROW, n, function()
-					applyModel(true, n, "Pick 3D model")
-					UI.requestRefresh()
-				end, { align = LEFTMID, scale = "body", active = n == current, noAutoIcon = true,
-					tip = "Use data/mod_assets/" .. n .. ".obj for the selection" })
-			end })
-		end
-	end
-	if (#shown > MODEL_ROWS) then
-		table.insert(entries, { kind = "buttons", items = {
-			{ "< Prev", function() UI.modelPage = math.max(1, UI.modelPage - 1); UI.requestRefresh() end, disabled = UI.modelPage <= 1 },
-			{ "Page " .. UI.modelPage .. " / " .. pages, function() end, disabled = true },
-			{ "Next >", function() UI.modelPage = math.min(pages, UI.modelPage + 1); UI.requestRefresh() end, disabled = UI.modelPage >= pages }
-		} })
-	end
-
-	-- Size
-	table.insert(entries, { kind = "header", label = "Model size and hitbox" })
-	table.insert(entries, { kind = "num", label = "Model scale", step = 0.1, min = 0.01,
-		tip = "The game stretches the model by the object's size on each axis. Scale 1 = the model's own size. Keeps the model's centre in place",
-		get = function() local o = prim(); return o and o.dims_x end,
-		set = function(v) MS.setModelScale(modelTargets(), v) end })
 	table.insert(entries, { kind = "buttons", items = {
-		{ "Original size", function()
-			local n = MS.setModelScale(modelTargets(), 1)
-			MS.toast(n > 0 and "Model drawn at its own size (object size 1 x 1 x 1)" or "Only box objects with a model can do this")
-			UI.requestRefresh()
-		end, tip = "Sets the object's size to 1 x 1 x 1, which draws the model at the size it was made. The object's own box becomes 1 x 1 x 1 too" },
-		{ "Fit hitbox to model", function()
-			local idx = MS.primary
-			if (idx and MS.modelAddHitbox(idx)) then UI.requestRefresh() end
-		end, tip = "Adds an invisible static box that exactly wraps the model as the game will draw it (reads the .obj vertices, follows the object's rotation and size). One undo step" }
+		{ has and "Change model..." or "Choose model...", function() UI.selectTab("models") end,
+			tip = "Opens the Models tab. Click Use on selected there to give this object that model" },
+		{ "Remove model", function() MS.removeModelFrom(modelTargets()); UI.requestRefresh() end, disabled = not has,
+			tip = "Takes the model (and its fitted hitbox) off this object" }
 	} })
-	table.insert(entries, { kind = "hint", rows = 3, scale = "small",
-		label = "Why a separate box? The game scales the model by the object's size, so one box can't be both the model's scale and its hitbox. Models about 1 unit big (like cube.obj) need no extra box." })
-
-	-- Options
-	table.insert(entries, { kind = "header", label = "Preview and paths" })
-	table.insert(entries, { kind = "toggle", label = "Show models in the editor", tip = "Draws each model over its object. The game itself shows it when you test or play the exported mod",
-		get = function() return MS.settings.modelPreview end,
-		set = function(v) MS.settings.modelPreview = v; MS.saveSettings() end })
-	table.insert(entries, { kind = "choice", label = "Mod folder", tip = "model_name is relative to data/mod_assets/<mod path>/. Mod Studio exports to data/mod/modmaker/ (2 levels). Use 1 only if you move the .tbm into data/mod itself",
-		options = { { 2, "modmaker/ (2)" }, { 1, "data/mod (1)" } },
-		get = function() return MS.settings.modelDepth or 2 end,
-		set = function(v) MS.settings.modelDepth = v; MS.saveSettings(); MS.assetCache = nil end })
+	if (has) then
+		table.insert(entries, { kind = "num", label = "Size", step = 0.1, min = 0.01,
+			tip = "Scales the model evenly around its centre. 1 = the size the model was made at",
+			get = function() local o = MS.primary and MS.objs[MS.primary]; return o and o.dims_x end,
+			set = function(v) MS.setModelScale(modelTargets(), v) end })
+		table.insert(entries, { kind = "toggle", label = "Solid (hitbox)",
+			tip = "On: an invisible box that exactly fits the model (and follows its size) makes it solid. Off: removes that box",
+			get = function() return MS.primary ~= nil and (MS.modelHitbox(MS.primary) ~= nil or MS.modelIsUnit(MS.primary)) end,
+			set = function(v)
+				local idx = MS.primary
+				if (not idx) then return end
+				if (v) then
+					MS.modelAddHitbox(idx)
+				elseif (MS.modelHitbox(idx)) then
+					MS.withUndo("Remove hitbox", function() MS.modelRemoveHitbox(idx) end)
+					MS.toast("Hitbox removed")
+				elseif (MS.modelIsUnit(idx)) then
+					MS.toast("This model is about 1 unit big: the object's own box is its hitbox")
+				end
+				UI.requestRefresh()
+			end })
+	end
 	return entries
 end
 
----Asset list, mod message note and asset pack (File tab)
+---Left dock: every .obj in data/mod_assets, rescanned live while this tab is open
+function UI.tabModels(pane)
+	local w = pane.size.w - PAD * 2
+	local y = PAD
+	pcall(MS.libPoll, false)
+	hint(pane, PAD, y, w, ROW * 2 + GAP, "Put .obj (+ .tga texture) files in data/mod_assets/<any folder>. They appear here automatically.", "small")
+	y = y + (ROW + GAP) * 2
+	field(pane, PAD, y, w, ROW, UI.modelFilter, { align = LEFTMID, placeholder = "Search models, then Enter", enter = function() UI.blurFields() end }, function(s)
+		UI.modelFilter = s
+		UI.filterDirty = true
+	end)
+	y = y + ROW + GAP
+	buttonRow(pane, PAD, y, w, ROW, {
+		{ "Open models folder", function() MS.openAssetsFolder() end, icon = "folder", tip = "Opens Toribash/data/mod_assets in your file browser" },
+		{ "Refresh", function()
+			MS.libPoll(true)
+			UI.requestRefresh()
+			MS.toast("Looked for models again")
+		end, icon = "undo", tip = "Look in data/mod_assets right now (it also checks by itself every couple of seconds)" }
+	})
+	y = y + ROW + GAP * 3
+
+	local targets = modelTargets()
+	local _, current = MS.objModel(MS.primary)
+	local q = (UI.modelFilter or ""):lower()
+	local groups, order = {}, {}
+	local total = 0
+	for _, e in ipairs(MS.lib.entries) do
+		total = total + 1
+		if (q == "" or e.name:lower():find(q, 1, true)) then
+			if (not groups[e.folder]) then groups[e.folder] = {}; table.insert(order, e.folder) end
+			table.insert(groups[e.folder], e)
+		end
+	end
+	table.sort(order, function(a, b) return a:lower() < b:lower() end)
+
+	local entries = {}
+	if (total == 0) then
+		table.insert(entries, { kind = "hint", rows = 3, label = "No .obj files in data/mod_assets yet. Drop some in (one folder per set works well) and they show up here within a couple of seconds." })
+	elseif (#order == 0) then
+		table.insert(entries, { kind = "hint", rows = 1, label = "No model matches the search." })
+	end
+	for _, folder in ipairs(order) do
+		table.insert(entries, { kind = "header", label = folder == "" and "data/mod_assets" or folder })
+		for _, e in ipairs(groups[folder]) do
+			local ee = e
+			table.insert(entries, { kind = "custom", rows = 2, render = function(holder, ry, rw)
+				local addW = #targets > 0 and floor(rw * 0.55) or rw
+				button(holder, 0, ry, addW, ROW, ee.base, function()
+					MS.addModelToScene(ee.name)
+					UI.requestRefresh()
+				end, { align = LEFTMID, scale = "body", noAutoIcon = true,
+					tip = "Add " .. ee.name .. " to the scene at its original size" })
+				if (#targets > 0) then
+					button(holder, addW + GAP, ry, rw - addW - GAP, ROW, "Use on selected", function()
+						MS.useModelOn(targets, ee.name)
+						UI.requestRefresh()
+					end, { scale = "body", noAutoIcon = true, active = ee.name == current,
+						tip = "Give the selected object(s) this model instead" })
+				end
+				label(holder, 4, ry + ROW + 1, rw - 4, ROW - 2, MS.libInfoLine(ee), LEFTMID, "small")
+			end })
+		end
+	end
+	table.insert(entries, { kind = "header", label = "Preview" })
+	table.insert(entries, { kind = "toggle", label = "Show models in the editor", tip = "Draws each model over its object. In Test mode the models follow the live objects",
+		get = function() return MS.settings.modelPreview end,
+		set = function(v) MS.settings.modelPreview = v; MS.saveSettings() end })
+	UI.paged(pane, y, pane.size.h - y - PAD, entries, "models")
+end
+
+---3D model assets block of the File tab: models used, download note, asset pack
 function UI.assetEntries()
 	local rep = MS.assetReport(false)
 	local entries = {}
 	local nModels = #rep.order
 	if (nModels == 0) then
-		table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = "No object uses a 3D model. Select an object and use Properties > 3D model to give it one." })
+		table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = "No 3D models in this mod. Add one from the Models tab." })
 		return entries
 	end
 	local missing = #rep.missing
-	table.insert(entries, { kind = "hint", rows = 1, label = nModels .. " model" .. (nModels == 1 and "" or "s") .. ", " .. #rep.files .. " file" .. (#rep.files == 1 and "" or "s") .. " found" .. (missing > 0 and (", " .. missing .. " MISSING") or "") })
+	table.insert(entries, { kind = "hint", rows = 1, label = nModels .. " model" .. (nModels == 1 and "" or "s") .. " used" .. (missing > 0 and (", " .. missing .. " file" .. (missing == 1 and "" or "s") .. " MISSING") or "") })
 	for i, name in ipairs(rep.order) do
-		if (i > 6) then
-			table.insert(entries, { kind = "hint", rows = 1, scale = "small", label = "+ " .. (nModels - 6) .. " more (see the asset list file)" })
+		if (i > 5) then
+			table.insert(entries, { kind = "hint", rows = 1, scale = "small", label = "+ " .. (nModels - 5) .. " more" })
 			break
 		end
 		local info = rep.infos[name]
-		local state = name == "" and "no model chosen" or (info and info.missing and "MISSING") or (info and info.textureMissing and "texture missing") or "ok"
+		local state = name == "" and "no model chosen" or (info and info.missing and "(!) FILE MISSING") or (info and info.textureMissing and "(!) texture missing") or "ok"
 		table.insert(entries, { kind = "hint", rows = 1, scale = "small", label = (name == "" and "(empty)" or name) .. "  x" .. #rep.users[name] .. "  -  " .. state })
 	end
+	table.insert(entries, { kind = "toggle", label = "Add download note to mod message",
+		tip = "Puts \"Download the mod's 3D assets and put them in Toribash/data/mod_assets\" at the end of the welcome message, and keeps it there on every export",
+		get = function() return MS.settings.assetNote end,
+		set = function(v)
+			MS.settings.assetNote = v
+			MS.saveSettings()
+			if (v) then MS.appendAssetNote("download") else MS.removeAssetNote() end
+			UI.requestRefresh()
+		end })
 	local canCopy = MS.canBinaryCopy()
 	table.insert(entries, { kind = "buttons", items = {
-		{ "Add asset list to message", function() MS.appendAssetNote("list"); UI.requestRefresh() end,
-			tip = "Adds \"This mod needs these assets: ...\" to the welcome message players see (replaces an earlier note)" },
-		{ "Add 'Download assets'", function() MS.appendAssetNote("download"); UI.requestRefresh() end,
-			tip = "Adds \"Download the mod's 3D assets\" to the welcome message (replaces an earlier note)" }
-	} })
-	table.insert(entries, { kind = "toggle", label = "Add the asset note when exporting", tip = "Every export puts \"This mod needs these assets: ...\" at the end of the welcome message",
-		get = function() return MS.settings.assetNote end,
-		set = function(v) MS.settings.assetNote = v; MS.saveSettings() end })
-	table.insert(entries, { kind = "buttons", items = {
-		{ "Write asset list", function()
-			if (not MS.lastExport) then MS.toast("Export the mod first - the list is saved next to it") return end
-			local path, err = MS.writeManifest(MS.lastExport)
-			MS.toast(path and ("Saved " .. path) or ("Couldn't save the list: " .. tostring(err)))
-		end, tip = "Writes data/mod/modmaker/<name>_assets.txt next to the exported mod, listing every file players need under data/mod_assets. Export also does this automatically" },
 		{ "Make asset pack", function()
 			local folder = MS.safeName(MS.saveName)
 			UI.confirm("Make asset pack?", "Copies every model file (obj, mtl, textures) into data/mod_assets/" .. folder .. "/ and points the objects at the copies, then exports again. " ..
@@ -1496,13 +1486,13 @@ function UI.assetEntries()
 				{ "Open mod_assets", function() MS.openAssetsFolder() end },
 				{ "Cancel" }
 			})
-		end, disabled = not canCopy, tip = canCopy and "Copy the model files into data/mod_assets/<mod name>/ so the mod's assets live in one folder you can zip and share" or "Copying files isn't available on this platform" }
+		end, disabled = not canCopy, tip = canCopy and "Copies the model files into data/mod_assets/<mod name>/" or "Copying files isn't available on this platform" }
 	} })
-	table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = canCopy
-		and "Copying uses the game's binary file access (works here). Scripts can't create folders, so make data/mod_assets/<mod name>/ yourself first."
-		or "This platform can't copy files from a script: only the asset list is written." })
+	table.insert(entries, { kind = "hint", rows = 3, scale = "small", label = canCopy
+		and "Make asset pack gathers all the models this mod uses into one folder, data/mod_assets/<mod name>/ (create that folder first), so you can zip and share it."
+		or "This platform can't copy files from a script. Players need the files listed above in data/mod_assets." })
 	for i, line in ipairs(UI.assetLog or {}) do
-		if (i > 8) then break end
+		if (i > 4) then break end
 		table.insert(entries, { kind = "hint", rows = 1, scale = "small", label = line })
 	end
 	return entries
@@ -2992,6 +2982,7 @@ UI.TAB_BUILD = {
 	scene = function(p) UI.tabScene(p) end,
 	create = function(p) UI.tabCreate(p) end,
 	library = function(p) UI.tabLibrary(p) end,
+	models = function(p) UI.tabModels(p) end,
 	links = function(p) UI.tabLinks(p) end,
 	properties = function(p) UI.tabProperties(p) end,
 	players = function(p) UI.tabPlayers(p) end,
@@ -3007,7 +2998,7 @@ UI.TAB_BUILD = {
 }
 
 UI.TAB_ICONS = {
-	scene = "box", create = "plus", library = "folder", links = "link", history = "undo",
+	scene = "box", create = "plus", library = "folder", models = "box", links = "link", history = "undo",
 	properties = "pencil", players = "body", joints = "joint",
 	file = "save", rules = "list", world = "world", stats = "bars", console = "terminal", tbm = "export", settings = "gear"
 }
@@ -3015,7 +3006,7 @@ UI.TAB_ICONS = {
 UI.ARROW_ICONS = { ["<"] = "chevleft", [">"] = "chevright", ["v"] = "chevdown", ["^"] = "chevup" }
 
 UI.DOCKS = {
-	{ side = "left", tabs = { { "scene", "Scene" }, { "create", "Create" }, { "library", "Library" }, { "links", "Links" }, { "history", "History" } } },
+	{ side = "left", tabs = { { "scene", "Scene" }, { "create", "Create" }, { "library", "Library" }, { "models", "Models" }, { "links", "Links" }, { "history", "History" } } },
 	{ side = "right", tabs = { { "properties", "Properties" }, { "players", "Bodies" }, { "joints", "Joints" } } },
 	{ side = "bottom", tabs = { { "file", "File" }, { "rules", "Rules" }, { "world", "World" }, { "stats", "Stats" }, { "console", "Console" }, { "tbm", "TBM" }, { "settings", "Settings" } } }
 }
@@ -3242,6 +3233,7 @@ function UI.refreshDock(side)
 	local content = UI.dockContent[side]
 	if (not content or content.destroyed) then return end
 	content:kill(true)
+	UI.purgeKeyboardHandlers()
 	local id = UI.dockState[side].active
 	local build = UI.TAB_BUILD[id]
 	if (build) then
@@ -3493,12 +3485,12 @@ UI.HELP = {
 	{ "Ctrl+H / Ctrl+Shift+H", "Hide the selection in the editor / show everything" },
 	{ "Ctrl+I", "Isolate: hide everything except the selection (again to show all)" },
 	{ "Ctrl+Shift+C / V", "Copy / paste all properties (color, physics, thrust, trigger)" },
-	{ "3D models", "Properties > 3D model: pick an .obj from data/mod_assets for an object. Export adds use_model / model_name" },
+	{ "Models tab", "Click a model to add it. Drop .obj files into data/mod_assets to bring in more" },
 	{ "Panels", "Drag :: to move a panel, the / corner to resize it. Scroll lists with the wheel" },
 	{ "Files", true },
 	{ "Ctrl+S", "Save project (keeps names, groups, parents, triangles)" },
 	{ "Ctrl+E", "Export a playable .tbm mod" },
-	{ "Assets", "File tab > 3D model assets: asset list, welcome-message note, copy into data/mod_assets/<mod>" },
+	{ "Assets", "File tab > 3D model assets: models used, download note, asset pack" },
 	{ "Tip", "Drag any field's label left/right to change it" }
 }
 
@@ -3760,6 +3752,16 @@ end
 
 function UI.tick()
 	if (UI.pointerDrag) then followPointerDrag() end
+	local nowClock = MS.clock()
+	if (nowClock - (UI.lastPurge or 0) > 5) then
+		UI.lastPurge = nowClock
+		UI.purgeKeyboardHandlers()
+	end
+	-- Models tab open: look at data/mod_assets every couple of seconds so dropped-in files show up
+	if (not MS.testMode and MS.libPoll and UI.isTabOpen("models")) then
+		local ok, changed = pcall(MS.libPoll, false)
+		if (ok and changed) then UI.filterDirty = true end
+	end
 	if (UI.filterDirty) then
 		-- Rebuilding while typing would steal focus from the search box, so wait until it loses focus
 		if (not UI.fieldFocused()) then

@@ -2349,7 +2349,13 @@ end
 
 function MS.onKeyDown(key)
 	if (not interactive()) then return end
-	if (MS.UI.fieldFocused()) then return end
+	if (MS.UI.fieldFocused()) then
+		-- A Mod Studio text field has the keyboard: the game's own hotkeys (Space, C / X / Z ...) must stay quiet.
+		-- The UI manager's hook already swallows keys while a field is active; this covers the gap where a
+		-- field is focused but the menu keyboard isn't on, so the key would fall through to the game.
+		if (TB_MENU_INPUT_ISACTIVE ~= true) then return 1 end
+		return
+	end
 	local okc, chat = pcall(chat_input_is_active)
 	if (okc and chat) then return end
 
