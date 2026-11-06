@@ -3608,11 +3608,23 @@ function UI.confirm(title, message, buttons)
 		bgColor = { 0, 0, 0, 0.45 }, interactive = true
 	})
 	UI.dialog = shade
-	local W, H = math.min(420, WIN_W - 40), 150
+	local W = math.min(420, WIN_W - 40)
+	-- Grow the message area until the whole (wrapped) message fits, so nothing is cut off
+	local msgH = 50
+	local probe = shade:addChild({ pos = { 0, 0 }, size = { W - 32, msgH } })
+	local sc = UI.textSize("body") * UI.textK
+	while (msgH < WIN_H - 160) do
+		local ok, fits = pcall(probe.uiText, probe, tostring(message or ""), nil, nil, 4, nil, sc, nil, nil, nil, nil, nil, true)
+		if (not ok or fits) then break end
+		msgH = msgH + 10
+		probe.size.h = msgH
+	end
+	probe:kill()
+	local H = 38 + msgH + 52
 	local box = shade:addChild({ pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(8) })
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
 	label(inner, 14, 8, W - 28, 28, title, LEFTMID, "title", UI.TITLE_FONT)
-	hint(inner, 14, 38, W - 28, 50, message, "body")
+	hint(inner, 14, 38, W - 28, msgH, message, "body")
 	local n = #buttons
 	local bw = (W - 28 - GAP * (n - 1)) / n
 	for i, b in ipairs(buttons) do
