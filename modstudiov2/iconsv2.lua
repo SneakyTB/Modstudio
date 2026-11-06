@@ -215,6 +215,15 @@ Icons.snap = function(cx, cy, s, w)
 	dot(cx + d / 3, cy - d / 3, w * 1.4)
 end
 
+Icons.grid = function(cx, cy, s, w)
+	local d = s * 0.38
+	local t = math.max(1, w * 0.75)
+	for i = -1, 1 do
+		line(cx - d, cy + i * d * 0.66, cx + d, cy + i * d * 0.66, t)
+		line(cx + i * d * 0.66, cy - d, cx + i * d * 0.66, cy + d, t)
+	end
+end
+
 Icons.stick = function(cx, cy, s, w)
 	-- Horseshoe magnet, poles down, with gaps marking the pole tips
 	local r = s * 0.24

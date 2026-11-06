@@ -192,7 +192,7 @@ UI.LABEL_ICONS = {
 	["Floor"] = "slab", ["Wall"] = "wall", ["Pillar"] = "pillar", ["Platform"] = "platform",
 	["Arch"] = "arch", ["Quarter pipe"] = "qpipe", ["Tunnel"] = "tunnel", ["Curved wall"] = "curvedwall", ["Spiral stairs"] = "spiral",
 	["Align X"] = "align", ["Align Y"] = "align", ["Align Z"] = "align", ["Spread X"] = "spread", ["Spread Y"] = "spread", ["Spread Z"] = "spread",
-	["Scale whole player"] = "scale", ["Put at midpoint"] = "move",
+	["Grid on"] = "grid", ["Grid off"] = "grid", ["Scale whole player"] = "scale", ["Put at midpoint"] = "move",
 }
 
 ---Button. o: active, disabled, tip, color, scale, align,
@@ -1070,6 +1070,230 @@ local function objInfoEntries()
 end
 
 ---------------------------------------------------------------------------
+-- 3D model (per object) and asset tools
+---------------------------------------------------------------------------
+
+UI.modelFilter = UI.modelFilter or ""
+UI.modelPage = UI.modelPage or 1
+UI.assetLog = UI.assetLog or {}
+local MODEL_ROWS = 5
+
+---Objects that can carry a model: everything selected except triangle slices
+local function modelTargets()
+	local list = {}
+	for _, idx in ipairs(MSV2.selList()) do
+		local m = MSV2.meta[idx]
+		if (not (m and m.tri and MSV2.tris[m.tri])) then table.insert(list, idx) end
+	end
+	return list
+end
+
+local function applyModel(use, name, title, key)
+	local list = modelTargets()
+	if (#list == 0) then
+		MSV2.toast("Select an object first")
+		return
+	end
+	MSV2.pushUndo(title or "3D model", key)
+	MSV2.setObjModels(list, use, name)
+end
+
+local function modelStatus()
+	local use, name = MSV2.objModel(MSV2.primary)
+	if (name == "") then
+		return use and "Pick a model from the list, or type its path above." or "No model. Turn on \"Use a 3D model\", then pick a file."
+	end
+	local bad = MSV2.modelNameProblem(name)
+	if (bad) then return "(!) The path " .. bad end
+	local info = MSV2.objInfo(name)
+	if (info.missing) then return "(!) Not found: data/mod_assets/" .. name .. ".obj" end
+	local txt = {}
+	if (info.ext) then
+		table.insert(txt, "Model is " .. MSV2.fmt(info.ext[1]) .. " x " .. MSV2.fmt(info.ext[2]) .. " x " .. MSV2.fmt(info.ext[3]) .. " (x, y, z) at scale 1.")
+	end
+	if (info.textureMissing) then
+		table.insert(txt, "(!) A texture named by its .mtl is missing.")
+	elseif (info.hasTexture) then
+		table.insert(txt, "Texture found.")
+	elseif (info.hasUV) then
+		table.insert(txt, "(!) No texture (" .. name:match("([^/]*)$") .. ".tga) next to it.")
+	else
+		table.insert(txt, "No texture needed.")
+	end
+	local rel = MSV2.relativeModelName(name, MSV2.modBaseSegs(MSV2.lastExport))
+	table.insert(txt, "Written as model_name " .. rel)
+	return table.concat(txt, " ")
+end
+
+local function objModelEntries()
+	if (MSV2.selSingleTri()) then
+		return { { kind = "hint", rows = 2, label = "Triangles are built from many boxes, so they can't carry one model. Give a single box or ball a 3D model instead." } }
+	end
+	local entries = {
+		{ kind = "hint", rows = 3, scale = 0.42, label = "Gives the object a 3D model (.obj from data/mod_assets). The game draws it at the object's position and turns and stretches it with the object's rotation and size. The object's box is still its hitbox." },
+		{ kind = "toggle", label = "Use a 3D model", tip = "Writes use_model 1 and model_name into the exported mod. Players need the .obj (and its .tga texture) in data/mod_assets",
+			get = function() local u = MSV2.objModel(MSV2.primary); return u end,
+			set = function(v) applyModel(v, nil, "3D model on/off") end },
+		{ kind = "text", label = "Model", placeholder = "folder/name  (no .obj)",
+			get = function() local _, n = MSV2.objModel(MSV2.primary); return n end,
+			set = function(s)
+				local _, cur = MSV2.objModel(MSV2.primary)
+				if (MSV2.cleanModelName(s) == cur) then return end
+				applyModel(MSV2.cleanModelName(s) ~= "" and true or nil, s, "3D model path", "model:name")
+			end },
+		{ kind = "hint", rows = 3, scale = 0.42, label = modelStatus() }
+	}
+
+	-- Picker
+	local all = MSV2.scanModels(false)
+	local q = (UI.modelFilter or ""):lower()
+	local shown = {}
+	for _, n in ipairs(all) do
+		if (q == "" or n:lower():find(q, 1, true)) then table.insert(shown, n) end
+	end
+	local pages = math.max(1, math.ceil(#shown / MODEL_ROWS))
+	UI.modelPage = MSV2.clamp(UI.modelPage or 1, 1, pages)
+	local _, current = MSV2.objModel(MSV2.primary)
+
+	table.insert(entries, { kind = "custom", render = function(holder, y, w)
+		local bw = floor(w * 0.3)
+		label(holder, 4, y, w - bw * 2 - GAP, ROW, "Files in data/mod_assets (" .. #all .. ")", LEFTMID, 0.45)
+		button(holder, w - bw * 2 - GAP, y, bw, ROW, "Refresh", function()
+			MSV2.scanModels(true)
+			MSV2.objCache = {}
+			MSV2.assetCache = nil
+			MSV2.unloadModels()
+			UI.requestRefresh()
+			MSV2.toast("Looked for models again")
+		end, { icon = "undo", scale = 0.42, tip = "Look in data/mod_assets again (after adding files) and reload previews" })
+		button(holder, w - bw, y, bw, ROW, "Folder", function() MSV2.openAssetsFolder() end,
+			{ icon = "folder", scale = 0.42, tip = "Open Toribash/data/mod_assets in your file browser" })
+	end })
+	table.insert(entries, { kind = "custom", render = function(holder, y, w)
+		field(holder, 0, y, w, ROW, UI.modelFilter, { align = LEFTMID, placeholder = "Filter models, then Enter", enter = function() UI.blurFields() end }, function(s)
+			UI.modelFilter = s
+			UI.modelPage = 1
+			UI.filterDirty = true
+		end)
+	end })
+	if (#all == 0) then
+		table.insert(entries, { kind = "hint", rows = 2, scale = 0.42, label = "No .obj files found in data/mod_assets. Put models there (e.g. data/mod_assets/mymod/rock.obj + rock.tga), then press Refresh." })
+	elseif (#shown == 0) then
+		table.insert(entries, { kind = "hint", rows = 1, label = "No model matches the filter." })
+	end
+	for r = 1, MODEL_ROWS do
+		local n = shown[(UI.modelPage - 1) * MODEL_ROWS + r]
+		if (n) then
+			table.insert(entries, { kind = "custom", render = function(holder, y, w)
+				button(holder, 0, y, w, ROW, n, function()
+					applyModel(true, n, "Pick 3D model")
+					UI.requestRefresh()
+				end, { align = LEFTMID, scale = 0.45, active = n == current, noAutoIcon = true,
+					tip = "Use data/mod_assets/" .. n .. ".obj for the selection" })
+			end })
+		end
+	end
+	if (#shown > MODEL_ROWS) then
+		table.insert(entries, { kind = "buttons", items = {
+			{ "< Prev", function() UI.modelPage = math.max(1, UI.modelPage - 1); UI.requestRefresh() end, disabled = UI.modelPage <= 1 },
+			{ "Page " .. UI.modelPage .. " / " .. pages, function() end, disabled = true },
+			{ "Next >", function() UI.modelPage = math.min(pages, UI.modelPage + 1); UI.requestRefresh() end, disabled = UI.modelPage >= pages }
+		} })
+	end
+
+	-- Size
+	table.insert(entries, { kind = "header", label = "Model size and hitbox" })
+	table.insert(entries, { kind = "num", label = "Model scale", step = 0.1, min = 0.01,
+		tip = "The game stretches the model by the object's size on each axis. Scale 1 = the model's own size. Keeps the model's centre in place",
+		get = function() local o = prim(); return o and o.dims_x end,
+		set = function(v) MSV2.setModelScale(modelTargets(), v) end })
+	table.insert(entries, { kind = "buttons", items = {
+		{ "Original size", function()
+			local n = MSV2.setModelScale(modelTargets(), 1)
+			MSV2.toast(n > 0 and "Model drawn at its own size (object size 1 x 1 x 1)" or "Only box objects with a model can do this")
+			UI.requestRefresh()
+		end, tip = "Sets the object's size to 1 x 1 x 1, which draws the model at the size it was made. The object's own box becomes 1 x 1 x 1 too" },
+		{ "Fit hitbox to model", function()
+			local idx = MSV2.primary
+			if (idx and MSV2.modelAddHitbox(idx)) then UI.requestRefresh() end
+		end, tip = "Adds an invisible static box that exactly wraps the model as the game will draw it (reads the .obj vertices, follows the object's rotation and size). One undo step" }
+	} })
+	table.insert(entries, { kind = "hint", rows = 3, scale = 0.4,
+		label = "Why a separate box? The game scales the model by the object's size, so one box can't be both the model's scale and its hitbox. Models about 1 unit big (like cube.obj) need no extra box." })
+
+	-- Options
+	table.insert(entries, { kind = "header", label = "Preview and paths" })
+	table.insert(entries, { kind = "toggle", label = "Show models in the editor", tip = "Draws each model over its object. The game itself shows it when you test or play the exported mod",
+		get = function() return MSV2.settings.modelPreview end,
+		set = function(v) MSV2.settings.modelPreview = v; MSV2.saveSettings() end })
+	table.insert(entries, { kind = "choice", label = "Mod folder", tip = "model_name is relative to data/mod_assets/<mod path>/. Mod Studio exports to data/mod/modmaker/ (2 levels). Use 1 only if you move the .tbm into data/mod itself",
+		options = { { 2, "modmaker/ (2)" }, { 1, "data/mod (1)" } },
+		get = function() return MSV2.settings.modelDepth or 2 end,
+		set = function(v) MSV2.settings.modelDepth = v; MSV2.saveSettings(); MSV2.assetCache = nil end })
+	return entries
+end
+
+---Asset list, mod message note and asset pack (File tab)
+function UI.assetEntries()
+	local rep = MSV2.assetReport(false)
+	local entries = {}
+	local nModels = #rep.order
+	if (nModels == 0) then
+		table.insert(entries, { kind = "hint", rows = 2, scale = 0.42, label = "No object uses a 3D model. Select an object and use Properties > 3D model to give it one." })
+		return entries
+	end
+	local missing = #rep.missing
+	table.insert(entries, { kind = "hint", rows = 1, label = nModels .. " model" .. (nModels == 1 and "" or "s") .. ", " .. #rep.files .. " file" .. (#rep.files == 1 and "" or "s") .. " found" .. (missing > 0 and (", " .. missing .. " MISSING") or "") })
+	for i, name in ipairs(rep.order) do
+		if (i > 6) then
+			table.insert(entries, { kind = "hint", rows = 1, scale = 0.4, label = "+ " .. (nModels - 6) .. " more (see the asset list file)" })
+			break
+		end
+		local info = rep.infos[name]
+		local state = name == "" and "no model chosen" or (info and info.missing and "MISSING") or (info and info.textureMissing and "texture missing") or "ok"
+		table.insert(entries, { kind = "hint", rows = 1, scale = 0.4, label = (name == "" and "(empty)" or name) .. "  x" .. #rep.users[name] .. "  -  " .. state })
+	end
+	local canCopy = MSV2.canBinaryCopy()
+	table.insert(entries, { kind = "buttons", items = {
+		{ "Add asset list to message", function() MSV2.appendAssetNote("list"); UI.requestRefresh() end,
+			tip = "Adds \"This mod needs these assets: ...\" to the welcome message players see (replaces an earlier note)" },
+		{ "Add 'Download assets'", function() MSV2.appendAssetNote("download"); UI.requestRefresh() end,
+			tip = "Adds \"Download the mod's 3D assets\" to the welcome message (replaces an earlier note)" }
+	} })
+	table.insert(entries, { kind = "toggle", label = "Add the asset note when exporting", tip = "Every export puts \"This mod needs these assets: ...\" at the end of the welcome message",
+		get = function() return MSV2.settings.assetNote end,
+		set = function(v) MSV2.settings.assetNote = v; MSV2.saveSettings() end })
+	table.insert(entries, { kind = "buttons", items = {
+		{ "Write asset list", function()
+			if (not MSV2.lastExport) then MSV2.toast("Export the mod first - the list is saved next to it") return end
+			local path, err = MSV2.writeManifest(MSV2.lastExport)
+			MSV2.toast(path and ("Saved " .. path) or ("Couldn't save the list: " .. tostring(err)))
+		end, tip = "Writes data/mod/modmaker/<name>_assets.txt next to the exported mod, listing every file players need under data/mod_assets. Export also does this automatically" },
+		{ "Make asset pack", function()
+			local folder = MSV2.safeName(MSV2.saveName)
+			UI.confirm("Make asset pack?", "Copies every model file (obj, mtl, textures) into data/mod_assets/" .. folder .. "/ and points the objects at the copies, then exports again. " ..
+				"Files that already exist there are never overwritten. The folder must exist already: create it in your file browser first (scripts can't create folders).", {
+				{ "Copy files", function()
+					UI.assetLog = MSV2.makeAssetPack(folder)
+					if ((MSV2.lastPackMoved or 0) > 0) then MSV2.exportMod(MSV2.saveName) end
+					UI.requestRefresh()
+				end },
+				{ "Open mod_assets", function() MSV2.openAssetsFolder() end },
+				{ "Cancel" }
+			})
+		end, disabled = not canCopy, tip = canCopy and "Copy the model files into data/mod_assets/<mod name>/ so the mod's assets live in one folder you can zip and share" or "Copying files isn't available on this platform" }
+	} })
+	table.insert(entries, { kind = "hint", rows = 2, scale = 0.4, label = canCopy
+		and "Copying uses the game's binary file access (works here). Scripts can't create folders, so make data/mod_assets/<mod name>/ yourself first."
+		or "This platform can't copy files from a script: only the asset list is written." })
+	for i, line in ipairs(UI.assetLog or {}) do
+		if (i > 8) then break end
+		table.insert(entries, { kind = "hint", rows = 1, scale = 0.4, label = line })
+	end
+	return entries
+end
+
+---------------------------------------------------------------------------
 -- Tabs
 ---------------------------------------------------------------------------
 
@@ -1231,7 +1455,7 @@ function UI.tabScene(pane)
 					end
 				end, { active = selected, align = LEFTMID, scale = 0.45,
 					tip = UI.parentPick and "Click to make this the parent of the selection" or
-						"Click to select, Shift+click to add, double-click (or F2) to rename. Indented rows are children of the row above" })
+						"Click to select, Shift+click to add, double-click (or Ctrl+R) to rename. Indented rows are children of the row above" })
 				button(holder, rw - 56, ry, 56, ROW, "", function()
 					local targets = it.tri and MSV2.tris[it.tri].objs or { it.idx }
 					for _, i in ipairs(targets) do
@@ -1260,7 +1484,7 @@ function UI.tabProperties(pane)
 	local rbw = math.min(70, floor(w * 0.25))
 	label(pane, PAD, y, w - rbw - GAP, ROW, title, LEFTMID, 0.55, UI.TITLE_FONT)
 	button(pane, PAD + w - rbw, y, rbw, ROW, "Rename", function() UI.renameNodes() end,
-		{ icon = "pencil", scale = 0.45, tip = "Give the selection a name (F2). Several at once become Name 1, Name 2..." })
+		{ icon = "pencil", scale = 0.45, tip = "Give the selection a name (Ctrl+R). Several at once become Name 1, Name 2..." })
 	y = y + ROW + GAP
 	local dist = MSV2.selectionDistance()
 	if (dist) then
@@ -1281,6 +1505,7 @@ function UI.tabProperties(pane)
 	local entries = UI.sections({
 		{ "obj:transform", triId and "Triangle" or "Transform", function() return triId and triEntries(triId) or objTransformEntries() end },
 		{ "obj:look", "Look", function() return withProps("look", objLookEntries()) end },
+		{ "obj:model", "3D model", objModelEntries },
 		{ "obj:physics", "Physics", function() return withProps("physics", objPhysicsEntries()) end },
 		{ "obj:thrust", "Thrust", function() return withProps("thrust", objThrustEntries()) end },
 		{ "obj:trigger", "Trigger", function() return withProps("trigger", objTriggerEntries()) end },
@@ -1644,32 +1869,19 @@ function UI.tabPlayers(pane)
 			{ kind = "toggle", label = "Gizmo moves the whole player", tip = "Turn on to move / turn the whole player and show the dojo resize dot",
 				get = function() return UI.sub.players == "place" end,
 				set = function(v) UI.sub.players = v and "place" or "transform"; UI.requestRefresh() end },
-			{ kind = "hint", rows = 2, scale = 0.44, label = "With that on, the gizmo moves/turns the whole " .. (PLAYER_NAMES[p] or "player") ..
-				". Pick the other player at the top. Drag the yellow dot to resize the dojo." },
+			{ kind = "hint", rows = 3, scale = 0.44, label = "With that on, the gizmo moves/turns the whole " .. (PLAYER_NAMES[p] or "player") ..
+				". Pick the other player at the top. Only this player moves (its start position); use Face the other way to turn. Drag the yellow dot to resize the dojo." },
 			{ kind = "buttons", items = {
-				{ "Face the other way", function()
-					MSV2.pushUndo("Turn player")
-					local Q = M.axisAngle({ 0, 0, 1 }, 180)
-					local c = MSV2.playerModCenter(p)
-					for b = 0, MSV2.NUM_BODIES - 1 do
-						local o = MSV2.bodies[p][b]
-						local np = V.add(c, M.apply(Q, V.sub({ o.pos_x, o.pos_y, o.pos_z }, c)))
-						MSV2.bodySet(p, b, "pos_x", np[1]); MSV2.bodySet(p, b, "pos_y", np[2]); MSV2.bodySet(p, b, "pos_z", np[3])
-						local x, yy, z = M.toEuler(M.mul(Q, M.fromEuler(o.rot_x, o.rot_y, o.rot_z)))
-						MSV2.bodySet(p, b, "rot_x", x); MSV2.bodySet(p, b, "rot_y", yy); MSV2.bodySet(p, b, "rot_z", z)
-					end
-					for j = 0, MSV2.NUM_JOINTS - 1 do
-						local o = MSV2.joints[p] and MSV2.joints[p][j]
-						if (o) then
-							local np = V.add(c, M.apply(Q, V.sub({ o.pos_x, o.pos_y, o.pos_z }, c)))
-							MSV2.jointSet(p, j, "pos_x", np[1]); MSV2.jointSet(p, j, "pos_y", np[2]); MSV2.jointSet(p, j, "pos_z", np[3])
-							local ax = M.apply(Q, { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 })
-							MSV2.jointSet(p, j, "axis_x", ax[1]); MSV2.jointSet(p, j, "axis_y", ax[2]); MSV2.jointSet(p, j, "axis_z", ax[3])
-						end
-					end
-					MSV2.toast("Turned " .. (PLAYER_NAMES[p] or "player") .. " around")
+				{ (MSV2.faceFlipped and MSV2.faceFlipped[p]) and "Face back" or "Face the other way", function()
+					-- Turns the whole player with the start-rotation rules (press again to turn back)
+					MSV2.faceToggle(p)
+					UI.requestRefresh()
 				end },
-				{ "Reset this player", function() MSV2.resetTo(p); UI.requestRefresh() end }
+				{ "Reset this player", function()
+					-- Body, joints, start position and facing all go back to the default
+					MSV2.resetTo(p)
+					UI.requestRefresh()
+				end }
 			} },
 			{ kind = "header", label = "Start spacing (applied when a match starts)" },
 			rule("Engage distance", "engagedistance", 5, "How far apart the players start"),
@@ -1686,7 +1898,31 @@ function UI.tabPlayers(pane)
 					MSV2.setRule("dojotype", v)
 					if (r) then MSV2.setDojoFromRadius(r) end
 				end },
-			rule("Dojo size", "dojosize", 25, "0 = no dojo. Square: full width. Round: radius (hundredths of a unit)"),
+			{ kind = "num", label = "Dojo size", step = 25, int = true, tip = "0 = no dojo. Square: full width. Round: radius (hundredths of a unit). Typical: 450 - 1100",
+				get = function() return tonumber(MSV2.getRule("dojosize")) or 0 end,
+				set = function(v)
+					MSV2.pushUndo("Dojo size", "rule:dojosize")
+					v = floor(v)
+					-- First step up from "no dojo": jump to a real arena size, not a 25cm box
+					if (v > 0 and v < 100 and (tonumber(MSV2.getRule("dojosize")) or 0) == 0) then v = 450 end
+					MSV2.setRule("dojosize", math.max(0, v))
+					if (v > 0) then MSV2.settings.showDojo = true end
+				end },
+			{ kind = "buttons", items = {
+				{ "Add a dojo", function()
+					MSV2.pushUndo("Add dojo")
+					if ((tonumber(MSV2.getRule("dojosize")) or 0) <= 0) then MSV2.setRule("dojosize", 600) end
+					MSV2.settings.showDojo = true
+					MSV2.saveSettings()
+					MSV2.toast("Dojo added - yellow outline on the floor. Restart match to see the game's own dojo")
+					UI.requestRefresh()
+				end },
+				{ "Remove dojo", function()
+					MSV2.pushUndo("Remove dojo")
+					MSV2.setRule("dojosize", 0)
+					UI.requestRefresh()
+				end }
+			} },
 			{ kind = "toggle", label = "Always show the dojo outline", get = function() return MSV2.settings.showDojo end,
 				set = function(v) MSV2.settings.showDojo = v; MSV2.saveSettings() end }
 		}
@@ -2114,6 +2350,17 @@ function UI.tabFile(pane)
 			set = function(v) MSV2.settings.autosaveMinutes = v; MSV2.saveSettings() end },
 		{ kind = "header", label = "Start from a template (objects + rules)" }
 	}
+	do
+		-- 3D model assets (list, welcome-message note, asset pack) sit above Autosave
+		local at
+		for i, e in ipairs(entries) do
+			if (e.kind == "header" and e.label == "Autosave") then at = i break end
+		end
+		if (at) then
+			table.insert(entries, at, { kind = "header", label = "3D model assets" })
+			for k, e in ipairs(UI.assetEntries()) do table.insert(entries, at + k, e) end
+		end
+	end
 	for _, t in ipairs(MSV2.TEMPLATES) do
 		local tt = t
 		table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
@@ -2790,6 +3037,7 @@ function UI.refresh()
 	for _, d in ipairs(UI.DOCKS) do
 		UI.refreshDock(d.side)
 	end
+	UI.raiseOverlays()
 end
 
 function UI.buildDocks()
@@ -2822,6 +3070,14 @@ function UI.toggleSnap()
 	MSV2.toast("Snapping " .. (MSV2.settings.snap and "on" or "off") .. " (hold Ctrl to flip it while dragging)")
 end
 
+function UI.toggleGrid()
+	MSV2.settings.showGrid = not MSV2.settings.showGrid
+	MSV2.saveSettings()
+	UI.buildToolbar()
+	UI.requestRefresh()
+	MSV2.toast(MSV2.settings.showGrid and "Floor grid on" or "Floor grid off")
+end
+
 function UI.topBarH() return ROW + 10 end
 function UI.statusH() return ROW + 4 end
 
@@ -2830,20 +3086,15 @@ function UI.buildToolbar()
 	if (not MSV2.active) then return end
 	local st = MSV2.settings
 	local items = {
-		{ "Select", function() UI.setTool("select") end, st.tool == "select", "1 - Click objects. Shift+click adds, Shift+drag box-selects" },
-		{ "Move", function() UI.setTool("move") end, st.tool == "move", "2 - Arrows: one axis. Squares: a plane. Center dot: free" },
-		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "3 - Drag a colored ring" },
-		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "4 - Drag a handle to stretch, center to resize evenly" },
-		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "5 - Click two points to see the distance between them" },
+		{ "Select", function() UI.setTool("select") end, st.tool == "select", "F1 - Click objects. Shift+click adds, Shift+drag box-selects" },
+		{ "Move", function() UI.setTool("move") end, st.tool == "move", "F2 - Arrows: one axis. Squares: a plane. Center dot: free" },
+		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "F3 - Drag a colored ring" },
+		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "F4 - Drag a handle to stretch, center to resize evenly" },
+		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "F9 - Click two points to see the distance between them" },
 		false,
 		{ st.space == "world" and "World" or "Local", UI.toggleSpace, false, "L - Gizmo aligned to the world or to the object" },
 		{ st.snap and "Snap on" or "Snap off", UI.toggleSnap, st.snap, "G - Snap to the grid (Ctrl flips it while dragging)" },
-		{ st.surfaceSnap and "Stick on" or "Stick off", function()
-			st.surfaceSnap = not st.surfaceSnap
-			MSV2.saveSettings()
-			UI.buildToolbar()
-			MSV2.toast(st.surfaceSnap and "Dragged objects rest on other objects and line up with their edges (Shift flips it)" or "Dragged objects slide at their own height (Shift flips it)")
-		end, st.surfaceSnap, "Dragged objects sit on whatever is under the cursor and line up edges. Hold Shift while dragging to flip" },
+		{ st.showGrid and "Grid on" or "Grid off", UI.toggleGrid, st.showGrid, "Show or hide the floor grid" },
 		false,
 		{ "Undo", MSV2.undo, false, "Ctrl+Z" },
 		{ "Redo", MSV2.redo, false, "Ctrl+Y" },
@@ -2923,7 +3174,7 @@ local function contextHint()
 		if (t == "suni") then return "Drag to resize evenly" end
 	end
 	if (G.hoverVertex) then return "Drag this corner to reshape the triangle" end
-	if (G.hoverObj) then return "Click to select " .. MSV2.objName(G.hoverObj) .. ". Drag to slide it (Alt: up/down)" end
+	if (G.hoverObj) then return "Click to select " .. MSV2.objName(G.hoverObj) .. ". Drag to hold it under the cursor" end
 	if (MSV2.settings.tool == "measure") then
 		return (MSV2.measure and MSV2.measure.a and not MSV2.measure.b) and "Click the second point" or "Click a point on an object or the floor to start measuring (Snap rounds to the grid)"
 	end
@@ -2931,7 +3182,7 @@ local function contextHint()
 	if (UI.isTabOpen("players")) then return "Click a body part in the world or the grid. Use the gizmo to move/resize it." end
 	if (UI.isTabOpen("joints")) then return "Click a joint in the world or the grid to edit it." end
 	if (MSV2.selCount() == 0) then return "Click an object to select it - or add one from the Objects / Create tab. H = help" end
-	return "Arrows: nudge | Ctrl+D: duplicate | Del: delete | F: focus | Ctrl+Z: undo | 1-4: tools"
+	return "Arrows: nudge | Ctrl+D: duplicate | Del: delete | F: focus | Ctrl+Z: undo | F1-F4: tools"
 end
 
 function UI.statusText()
@@ -2992,14 +3243,14 @@ UI.HELP = {
 	{ "Shift+drag", "Box-select on empty space" },
 	{ "Ctrl+A / Esc", "Select everything / deselect" },
 	{ "Editing", true },
-	{ "1 2 3 4 5", "Select, Move, Rotate, Scale, Measure tools" },
-	{ "Drag object", "It rests on what's under the cursor and lines up edges (Shift: off, Alt: up/down)" },
+	{ "F1 F2 F3 F4 F9", "Select, Move, Rotate, Scale, Measure tools" },
+	{ "Drag object", "Holds it under the cursor at the same distance from the camera" },
 	{ "WASD (dragging)", "Move the camera - the held object comes along" },
 	{ "Arrow keys", "Nudge by one grid step (PgUp/PgDn: up/down, Shift: finer)" },
 	{ "L / G", "World or local gizmo / snapping on or off" },
 	{ "Ctrl (dragging)", "Temporarily flip snapping" },
 	{ "Ctrl+D / Del", "Duplicate / delete" },
-	{ "F2", "Rename the selection (or double-click it in Scene)" },
+	{ "Ctrl+R", "Rename the selection (or double-click it in Scene)" },
 	{ "Ctrl+C / Ctrl+V", "Copy / paste" },
 	{ "Ctrl+Z / Ctrl+Y", "Undo / redo (everything is undoable)" },
 	{ "Parenting", true },
@@ -3008,17 +3259,40 @@ UI.HELP = {
 	{ "[  /  ]", "Select parent / select children (Shift+]: whole branch)" },
 	{ "Children", "Follow their parent when it's moved, turned, resized, copied or mirrored" },
 	{ "More", true },
-	{ "Scroll (dragging)", "While click-dragging an object: push it away / pull it closer. Shift+scroll zooms" },
+	{ "Scroll (dragging)", "Push it away / pull it closer. Shift+scroll zooms the camera" },
 	{ "Alt + gizmo drag", "Drag out a copy instead of moving the original" },
 	{ "Ctrl+H / Ctrl+Shift+H", "Hide the selection in the editor / show everything" },
 	{ "Ctrl+I", "Isolate: hide everything except the selection (again to show all)" },
 	{ "Ctrl+Shift+C / V", "Copy / paste all properties (color, physics, thrust, trigger)" },
+	{ "3D models", "Properties > 3D model: pick an .obj from data/mod_assets for an object. Export adds use_model / model_name" },
 	{ "Panels", "Drag :: to move a panel, the / corner to resize it. Scroll lists with the wheel" },
 	{ "Files", true },
 	{ "Ctrl+S", "Save project (keeps names, groups, parents, triangles)" },
 	{ "Ctrl+E", "Export a playable .tbm mod" },
+	{ "Assets", "File tab > 3D model assets: asset list, welcome-message note, copy into data/mod_assets/<mod>" },
 	{ "Tip", "Drag any field's label left/right to change it" }
 }
+
+-- Anything (re)built after the help/dialog would draw over it, so push them back on top after every rebuild
+for _, name in ipairs({ "buildDock", "buildToolbar", "buildStatus" }) do
+	local build = UI[name]
+	UI[name] = function(...)
+		local r = build(...)
+		UI.raiseOverlays()
+		return r
+	end
+end
+
+---Re-queues the help and dialog overlays so they draw (and take the mouse) above anything built after them.
+---toriui draws in show order and hands the mouse to the last shown element; hide + show moves an element to the end.
+function UI.raiseOverlays()
+	for _, el in ipairs({ UI.help, UI.dialog }) do
+		if (el and not el.destroyed) then
+			el:hide()
+			el:show()
+		end
+	end
+end
 
 function UI.toggleHelp(force)
 	if (UI.help and not force) then
@@ -3031,29 +3305,64 @@ function UI.toggleHelp(force)
 		return
 	end
 	if (UI.help) then UI.help:kill() end
-	local rowH = 20
+
+	-- Free space between the top bar and the bottom dock / status bar
+	local top = UI.toolbar and not UI.toolbar.destroyed and (UI.toolbar.pos.y + UI.toolbar.size.h) or 0
+	local bottom = WIN_H
+	if (UI.status and not UI.status.destroyed and UI.status.pos.y > WIN_H / 2) then bottom = UI.status.pos.y end
+	local bd = UI.dockEls and UI.dockEls.bottom
+	if (bd and not bd.destroyed and bd.pos.y > WIN_H / 2 and bd.pos.y < bottom) then bottom = bd.pos.y end
+	top, bottom = top + 6, bottom - 6
+	local avail = math.max(200, bottom - top)
+
+	local HEAD, FOOT, MINROW = 44, 44, 16
+	local rows = UI.HELP
+	local cols, split = 1, #rows + 1
 	local W = math.min(560, WIN_W - 40)
-	local H = 70 + #UI.HELP * rowH + 40
+	if (HEAD + #rows * 20 + FOOT > avail) then
+		-- Two columns, split at the section header nearest the middle
+		cols = 2
+		W = math.min(1000, WIN_W - 40)
+		local best
+		for i, row in ipairs(rows) do
+			if (row[2] == true and i > 1 and (not best or math.abs(i - #rows / 2) < math.abs(best - #rows / 2))) then best = i end
+		end
+		split = best or (floor(#rows / 2) + 1)
+	end
+	local maxRows = cols == 1 and #rows or math.max(split - 1, #rows - split + 1)
+	local rowH = math.max(MINROW, math.min(20, floor((avail - HEAD - FOOT) / maxRows)))
+	local H = math.min(avail, HEAD + maxRows * rowH + FOOT)
+
+	local black, white = { 0, 0, 0, 1 }, { 1, 1, 1, 1 }
 	local box = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
-		pos = { floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) }, size = { W, H },
-		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(8), interactive = true
+		pos = { floor((WIN_W - W) / 2), floor(top + (avail - H) / 2) }, size = { W, H },
+		bgColor = { 0.45, 0.45, 0.45, 1 }, shapeType = ROUNDED, rounded = UI.r(8), interactive = true,
+		uiColor = black
 	})
 	UI.help = box
-	local inner = box:addChild({ shift = { 2, 2 }, bgColor = C.bg }, true)
+	local inner = box:addChild({ shift = { 2, 2 }, bgColor = white, uiColor = black }, true)
 	label(inner, 14, 8, W - 30, 30, MSV2.settings.firstRun and "Welcome to Mod Studio!" or "Mod Studio - shortcuts", LEFTMID, 0.75, UI.TITLE_FONT)
-	local y = 44
-	for _, row in ipairs(UI.HELP) do
+	local colW = (W - 4) / cols
+	local keyW = cols == 1 and 150 or 130
+	for i, row in ipairs(rows) do
+		local col, idx = 0, i
+		if (cols == 2 and i >= split) then col, idx = 1, i - split + 1 end
+		local x0 = floor(col * colW)
+		local y = HEAD + (idx - 1) * rowH
 		if (row[2] == true) then
-			local bar = inner:addChild({ pos = { 10, y + 2 }, size = { W - 24, rowH - 2 }, bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
+			local bar = inner:addChild({ pos = { x0 + 10, y + 2 }, size = { colW - 20, rowH - 2 }, bgColor = { 0.85, 0.85, 0.85, 1 }, shapeType = ROUNDED, rounded = UI.r(3) })
 			bar:addAdaptedText(false, row[1], 6, nil, 4, LEFTMID, 0.48)
 		else
-			label(inner, 18, y, 150, rowH, row[1], LEFTMID, 0.47)
-			label(inner, 170, y, W - 190, rowH, row[2], LEFTMID, 0.47)
+			label(inner, x0 + 18, y, keyW, rowH, row[1], LEFTMID, 0.47)
+			label(inner, x0 + 18 + keyW + 4, y, colW - keyW - 30, rowH, row[2], LEFTMID, 0.47)
 		end
-		y = y + rowH
 	end
-	button(inner, W / 2 - 80, H - 36, 160, 28, MSV2.settings.firstRun and "Let's go!" or "Close (H)", function() UI.toggleHelp() end)
+	local btn = button(inner, W / 2 - 80, inner.size.h - 36, 160, 28, MSV2.settings.firstRun and "Let's go!" or "Close (H)", function() UI.toggleHelp() end)
+	-- Black text would vanish on the dark button
+	btn.uiColor = { 1, 1, 1, 1 }
+	for _, c in ipairs(btn.child) do c.uiColor = btn.uiColor end
+	UI.raiseOverlays()
 end
 
 ---------------------------------------------------------------------------

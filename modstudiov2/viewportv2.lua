@@ -306,7 +306,7 @@ function MSV2.gizmoContext()
 		local p = MSV2.bodySel.p
 		local c = MSV2.playerWorldCenter(p)
 		if (c) then
-			return { kind = "player", p = p, pivot = c, A = M.identity(), W = MSV2.playerFrame(p), rot = true, scale = false }
+			return { kind = "player", p = p, pivot = c, A = M.identity(), W = MSV2.playerFrame(p), rot = false, scale = false }
 		end
 	end
 	if (tabOpen("players") and MSV2.settings.bodyGizmo and MSV2.bodySel) then
@@ -360,6 +360,16 @@ local function captureItems(ctx)
 		for j = 0, MSV2.NUM_JOINTS - 1 do
 			local o = MSV2.joints[p] and MSV2.joints[p][j]
 			if (o) then it.joints[j] = { pos = { o.pos_x, o.pos_y, o.pos_z }, axis = { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 } } end
+		end
+		-- Where the game draws each part now: lets a move show up instantly (set_body_pos)
+		it.world, it.jworld = {}, {}
+		for b = 0, MSV2.NUM_BODIES - 1 do
+			local w = MSV2.bodyWorld(p, b)
+			if (w) then it.world[b] = w.pos end
+		end
+		for j = 0, MSV2.NUM_JOINTS - 1 do
+			local w = MSV2.jointWorld(p, j)
+			if (w) then it.jworld[j] = w.pos end
 		end
 		items.player = it
 	elseif (ctx.kind == "body") then
@@ -443,7 +453,8 @@ local function applyOp(drag, op)
 
 	-- Body/joint gizmos work in world space; convert into the player's mod coordinates
 	local W = drag.ctx and drag.ctx.W
-	if ((items.body or items.joint or items.player) and W) then
+	local worldMove = op.move
+	if ((items.body or items.joint) and W) then
 		local Wt = M.transpose(W)
 		local o2 = {}
 		for k, v in pairs(op) do o2[k] = v end
@@ -454,31 +465,20 @@ local function applyOp(drag, op)
 	end
 
 	if (items.player) then
-		-- Every part and joint moves / turns together around the player's center
+		-- Whole player: only a live preview here (the drawn parts are shifted with
+		-- set_body_pos / set_joint_pos). Nothing is written to the mod data - on release
+		-- MSV2.movePlayerBy() changes this player's engageplayerpos entry instead.
 		local it = items.player
 		local p = it.p
-		local Q = op.rot or M.identity()
-		local mv = op.move or { 0, 0, 0 }
-		local function tp(pos) return V.add(V.add(it.center, M.apply(Q, V.sub(pos, it.center))), mv) end
-		for b, s in pairs(it.bodies) do
-			local np = tp(s.pos)
-			MSV2.bodySet(p, b, "pos_x", np[1])
-			MSV2.bodySet(p, b, "pos_y", np[2])
-			MSV2.bodySet(p, b, "pos_z", np[3])
-			local x, y, z = M.toEuler(M.mul(Q, s.R))
-			MSV2.bodySet(p, b, "rot_x", x)
-			MSV2.bodySet(p, b, "rot_y", y)
-			MSV2.bodySet(p, b, "rot_z", z)
+		if (not worldMove) then return end
+		drag.pTotal = V.add(drag.pBase or { 0, 0, 0 }, worldMove)
+		for b, wp in pairs(it.world or {}) do
+			local np = V.add(wp, worldMove)
+			pcall(set_body_pos, p, b, np[1], np[2], np[3])
 		end
-		for j, s in pairs(it.joints) do
-			local np = tp(s.pos)
-			MSV2.jointSet(p, j, "pos_x", np[1])
-			MSV2.jointSet(p, j, "pos_y", np[2])
-			MSV2.jointSet(p, j, "pos_z", np[3])
-			local ax = M.apply(Q, s.axis)
-			MSV2.jointSet(p, j, "axis_x", ax[1])
-			MSV2.jointSet(p, j, "axis_y", ax[2])
-			MSV2.jointSet(p, j, "axis_z", ax[3])
+		for j, wp in pairs(it.jworld or {}) do
+			local np = V.add(wp, worldMove)
+			pcall(set_joint_pos, p, j, np[1], np[2], np[3])
 		end
 		return
 	end
@@ -578,6 +578,108 @@ local function isIdentity(A)
 	return abs(A[1][1] - 1) < 1e-6 and abs(A[2][2] - 1) < 1e-6 and abs(A[3][3] - 1) < 1e-6
 end
 
+---------------------------------------------------------------------------
+-- Held objects: a direct drag of an object keeps it under the cursor at a fixed
+-- distance from the camera (only the wheel changes that distance). The cursor
+-- direction is stored in camera-local terms, so it can be rebuilt every frame
+-- with the CURRENT camera - ray_world_point can lag a frame behind the camera.
+---------------------------------------------------------------------------
+
+---Fresh screen Jacobian of the current camera (built every frame in draw3d by MSV2.updateProj)
+local function freshProj()
+	local pr = MSV2.proj
+	if (pr and MSV2.clock() - pr.t < 0.5) then return pr end
+	return nil
+end
+
+---Analytic cursor ray as { right, up, forward } components, built from the camera
+---that MSV2.proj was projected with. Solves (x - cx, y - cy) = a*R' + b*U' for the
+---offsets (a, b) across the plane 10 units in front of the camera.
+local function analyticLocalRay(x, y)
+	local pr = freshProj()
+	if (not pr or not x or not y) then return nil end
+	local dx, dy = x - pr.cx, y - pr.cy
+	local a = (dx * pr.uy - dy * pr.ux) / pr.det
+	local b = (pr.rx * dy - pr.ry * dx) / pr.det
+	local n = sqrt(a * a + b * b + pr.depth * pr.depth)
+	return { a / n, b / n, pr.depth / n }
+end
+
+---Old fallback (no projection yet): direction through screen point (x, y) from ray_world_point
+local function legacyLocalRay(x, y)
+	local ro, rd = MSV2.mouseRay(x, y)
+	if (not ro) then return nil end
+	local f, r, u
+	local okW, w, h = pcall(get_window_size)
+	if (okW and w and h and w > 0 and h > 0) then
+		local cro, cd = MSV2.mouseRay(w / 2, h / 2)
+		if (cro) then
+			f = cd
+			r = V.cross(f, { 0, 0, 1 })
+			r = V.len(r) < 1e-3 and { 1, 0, 0 } or V.norm(r)
+			u = V.norm(V.cross(r, f))
+		end
+	end
+	if (not f) then
+		local _, _, cf, cr, cu = camVectors()
+		f, r, u = cf, cr, cu
+	end
+	return { V.dot(rd, r), V.dot(rd, u), V.dot(rd, f) }
+end
+
+local function heldLocalRay(x, y)
+	return analyticLocalRay(x, y) or legacyLocalRay(x, y)
+end
+
+---World ray for a camera-local direction. Uses the camera the projection was built
+---from (same frame), so the ray always matches what is on screen.
+local function heldWorldRay(lr)
+	local pr = freshProj()
+	local pos, f, r, u
+	if (pr) then
+		pos, f, r, u = pr.pos, pr.fwd, pr.right, pr.up
+	else
+		local _
+		pos, _, f, r, u = camVectors()
+	end
+	local rd = V.norm(V.add(V.mul(r, lr[1]), V.add(V.mul(u, lr[2]), V.mul(f, lr[3]))))
+	return pos, rd, f, r, u
+end
+
+---Grabs the selection where it is right now: remembers its depth along the cursor
+---ray and its offset from that ray (camera-local), so nothing jumps
+local function initHeld(drag, x, y)
+	local lr = heldLocalRay(x, y)
+	if (not lr) then
+		drag.held = nil
+		return
+	end
+	local pos, rd, f, r, u = heldWorldRay(lr)
+	local t = math.max(0.6, V.dot(V.sub(drag.pivot0, pos), rd))
+	local off = V.sub(drag.pivot0, V.add(pos, V.mul(rd, t)))
+	drag.held = { lray = lr, t = t, off = { V.dot(off, r), V.dot(off, u), V.dot(off, f) }, msg = "Holding" }
+	drag.heldD = nil
+end
+
+---Puts a held selection under the cursor at its stored distance. The ray comes from
+---the latest projection and the latest cursor position every call (each frame, mouse
+---move and wheel), never from ray_world_point, so camera motion can't skew it.
+function MSV2.tickHeld(drag, mx, my)
+	local hd = drag and drag.held
+	if (not hd or not drag.started) then return end
+	local lr = analyticLocalRay(mx or G.mouseX, my or G.mouseY)
+	if (lr) then hd.lray = lr end
+	local pos, rd, f, r, u = heldWorldRay(hd.lray)
+	local o = hd.off
+	local target = V.add(V.add(pos, V.mul(rd, hd.t)), V.add(V.mul(r, o[1]), V.add(V.mul(u, o[2]), V.mul(f, o[3]))))
+	drag.snap = MSV2.snapActive()
+	local d = snapMoveDelta(drag, V.sub(target, drag.pivot0), { true, true, true })
+	drag.readout = hd.msg .. ": " .. MSV2.fmt(V.dist(pos, V.add(drag.pivot0, d))) .. " from camera"
+	if (drag.heldD and V.dist(d, drag.heldD) < 1e-5) then return end
+	drag.heldD = d
+	applyOp(drag, { move = d })
+end
+
 ---Starts a drag. handle = { type = axis|plane|free|ring|saxis|suni|direct, k = axis }
 function MSV2.beginDrag(handle, x, y, ctx)
 	ctx = ctx or MSV2.gizmoContext()
@@ -611,6 +713,12 @@ function MSV2.beginDrag(handle, x, y, ctx)
 	if (handle.type == "axis" or handle.type == "saxis") then
 		drag.axis = M.col(A, handle.k)
 		drag.t0 = ro and lineRayParam(drag.pivot0, drag.axis, ro, rd)
+		if (handle.type == "axis" and handle.fake) then
+			-- Axis pointing along the view: move by mouse distance along the stand-in arrow
+			local g = MSV2.frame and MSV2.frame.giz
+			drag.fake = handle.fake
+			drag.ppu = (g and g.L and g.L > 0) and (MSV2.settings.gizmoSize / g.L) or 100
+		end
 	elseif (handle.type == "plane") then
 		drag.normal = M.col(A, handle.k)
 	elseif (handle.type == "free") then
@@ -641,7 +749,11 @@ function MSV2.beginDrag(handle, x, y, ctx)
 	G.dragCam = { V.copy(camPos), V.copy(look) }
 	pcall(disable_mouse_camera_movement)
 	drag.dup = dup
-	if (drag.started and not dup) then
+	if (handle.type == "direct" and (ctx.kind == "env" or ctx.kind == "player")) then
+		initHeld(drag, x, y)
+	end
+	if (drag.started and not dup and ctx.kind ~= "player") then
+		drag.undoPushed = true
 		MSV2.pushUndo(({ axis = "Move", plane = "Move", free = "Move", ring = "Rotate", saxis = "Scale", suni = "Scale" })[handle.type] or "Edit")
 	end
 	return true
@@ -653,7 +765,19 @@ function MSV2.updateDrag(x, y)
 	if (not drag.started) then
 		if (abs(x - drag.x0) + abs(y - drag.y0) < 5) then return end
 		drag.started = true
-		MSV2.pushUndo("Move")
+		if (drag.ctx.kind ~= "player") then drag.undoPushed = true; MSV2.pushUndo("Move") end
+		-- The camera may have moved since the click: grab again from here so nothing jumps
+		if (drag.held) then initHeld(drag, x, y) end
+	end
+	if (drag.held) then
+		-- No ray_world_point here: tickHeld rebuilds the ray from the current projection
+		if (not freshProj()) then
+			local lr = legacyLocalRay(x, y)
+			if (lr) then drag.held.lray = lr end
+		end
+		MSV2.tickHeld(drag, x, y)
+		drag.mx, drag.my = x, y
+		return
 	end
 	if (drag.needRebase) then
 		-- Camera moved since the last mouse update: anchor at the previous cursor
@@ -665,14 +789,12 @@ function MSV2.updateDrag(x, y)
 	if (not ro) then return end
 	local h = drag.handle
 	local op, readout
-	local snapD, snapInfo
-	if (h.type == "direct" and not h.vertical and not h.cameraPlane and not drag.pushed and drag.ctx and drag.ctx.kind == "env" and MSV2.surfaceSnapActive()) then
-		snapD, snapInfo = MSV2.surfaceSnapDelta(drag, ro, rd)
-	end
-
 
 	if (h.type == "axis") then
 		local t = lineRayParam(drag.pivot0, drag.axis, ro, rd)
+		if (drag.fake) then
+			t, drag.t0 = ((x - drag.x0) * drag.fake[1] + (y - drag.y0) * drag.fake[2]) / drag.ppu, 0
+		end
 		if (t and drag.t0) then
 			local axes = { false, false, false }
 			axes[h.k] = true
@@ -680,10 +802,6 @@ function MSV2.updateDrag(x, y)
 			op = { move = d }
 			readout = AXIS_NAMES[h.k] .. " " .. (V.dot(d, drag.axis) >= 0 and "+" or "") .. MSV2.fmt(V.dot(d, drag.axis))
 		end
-	elseif (snapD) then
-		-- Rest the selection on whatever surface is under the cursor
-		op = { move = snapD }
-		readout = snapInfo
 	elseif (h.type == "plane" or h.type == "free" or h.type == "direct") then
 		-- Rays that only skim the plane hit it miles away - ignore them instead of flinging the object
 		local grazing = abs(V.dot(rd, drag.normal)) < 0.06
@@ -756,6 +874,10 @@ function MSV2.endDrag()
 	G.drag = nil
 	pcall(enable_mouse_camera_movement)
 	if (drag.started) then
+		if (drag.ctx and drag.ctx.kind == "player" and drag.pTotal and V.len(drag.pTotal) > 1e-4) then
+			-- Whole player: the preview becomes this player's engageplayerpos entry
+			MSV2.movePlayerBy(drag.ctx.p, drag.pTotal, { label = "Move player", previewed = true })
+		end
 		MSV2.UI.requestRefresh()
 	end
 end
@@ -788,7 +910,7 @@ function MSV2.cancelDrag()
 			applyOp(drag, { scale = 1 })
 		end
 		-- The undo entry pushed at drag start is now a no-op; drop it
-		table.remove(MSV2.undoStack)
+		if (drag.undoPushed) then table.remove(MSV2.undoStack) end
 	end
 	MSV2.endDragSilently()
 	MSV2.toast("Cancelled")
@@ -802,6 +924,27 @@ end
 local function P(v)
 	local x, y, z = get_screen_pos(v[1], v[2], v[3])
 	return { x, y, ok = (z == 0) }
+end
+
+---Screen Jacobian of the current camera, rebuilt every frame in draw3d (the only place
+---get_screen_pos works). Three points 10 units ahead give where the camera's right and
+---up axes land on screen, which is all that's needed to turn a cursor position into a
+---world ray without ray_world_point (that lags a frame behind the camera).
+local PROJ_DEPTH, PROJ_SPAN = 10, 4
+function MSV2.updateProj()
+	local pos, _, fwd, right, up = camVectors()
+	local C = V.add(pos, V.mul(fwd, PROJ_DEPTH))
+	local pc = P(C)
+	local pr = P(V.add(C, V.mul(right, PROJ_SPAN)))
+	local pu = P(V.add(C, V.mul(up, PROJ_SPAN)))
+	if (not (pc.ok and pr.ok and pu.ok)) then return end
+	-- Screen pixels per unit of right / up at that depth
+	local rx, ry = (pr[1] - pc[1]) / PROJ_SPAN, (pr[2] - pc[2]) / PROJ_SPAN
+	local ux, uy = (pu[1] - pc[1]) / PROJ_SPAN, (pu[2] - pc[2]) / PROJ_SPAN
+	local det = rx * uy - ry * ux
+	if (abs(det) < 1e-3) then return end
+	MSV2.proj = { pos = pos, fwd = fwd, right = right, up = up, cx = pc[1], cy = pc[2],
+		rx = rx, ry = ry, ux = ux, uy = uy, det = det, depth = PROJ_DEPTH, t = MSV2.clock() }
 end
 
 local function boxCorners(pos, R, e)
@@ -1032,6 +1175,15 @@ function MSV2.buildFrame()
 					local tip = P(V.add(pivot, V.mul(dir, L)))
 					local base = P(V.add(pivot, V.mul(dir, L * 0.18)))
 					g.axes[k] = { tip = tip, base = base, ok = tip.ok and base.ok and ((tip[1] - c[1]) ^ 2 + (tip[2] - c[2]) ^ 2) > 196 }
+					if (tool == "move" and not g.axes[k].ok) then
+						-- Axis points (almost) along the view direction (e.g. Y from the default
+						-- camera): its arrow collapses to a dot. Show a stand-in arrow instead;
+						-- dragging it moves along the axis by mouse distance.
+						local away = V.dot(dir, fwd) > 0
+						local fd = away and { 0.7071, -0.7071 } or { -0.7071, 0.7071 }
+						g.axes[k] = { tip = { c[1] + fd[1] * 52, c[2] + fd[2] * 52, ok = true },
+							base = { c[1] + fd[1] * 12, c[2] + fd[2] * 12, ok = true }, ok = true, fake = fd }
+					end
 				end
 				if (tool == "move") then
 					for k = 1, 3 do
@@ -1111,7 +1263,7 @@ function MSV2.gizmoHit(x, y)
 				local d = distSeg(x, y, a.base[1], a.base[2], a.tip[1], a.tip[2])
 				local dt = sqrt((x - a.tip[1]) ^ 2 + (y - a.tip[2]) ^ 2) - 4
 				d = math.min(d, dt)
-				if (d < bestD) then best, bestD = { type = g.tool == "move" and "axis" or "saxis", k = k }, d end
+				if (d < bestD) then best, bestD = { type = g.tool == "move" and "axis" or "saxis", k = k, fake = a.fake }, d end
 			end
 		end
 	elseif (g.tool == "rotate") then
@@ -1162,59 +1314,104 @@ end
 -- Drawing
 ---------------------------------------------------------------------------
 
-function MSV2.draw3d()
-	-- Ground grid
+---Floor grid, dojo outline and measuring line. Runs from the post_draw3d hook: draw_line_3d
+---isn't batched, so it only draws reliably after everything else (and the lines are
+---lifted off the floor by their distance from the camera so they don't z-fight away).
+function MSV2.drawFloor3d()
+	if (not draw_line_3d) then return end
+	local camPos = camVectors()
+	local function lift(base, x, y)
+		local dx, dy, dz = x - camPos[1], y - camPos[2], base - camPos[3]
+		return base + 0.002 * sqrt(dx * dx + dy * dy + dz * dz)
+	end
+	-- Ground grid. draw_line is 2D only (x1, y1, x2, y2, width); floor lines need draw_line_3d.
 	if (MSV2.settings.showGrid) then
-		local step = MSV2.settings.gridStep
-		if (step <= 0) then step = 1 end
-		local ext = MSV2.settings.gridExtent or 16
-		while (ext / step > 48) do step = step * 2 end
+		local step = tonumber(MSV2.settings.gridStep) or 0.25
+		if (step <= 0.001) then step = 0.25 end
+		local ext = math.max(1, tonumber(MSV2.settings.gridExtent) or 50)
+		-- Too many lines (tiny step / huge extent): draw only the whole-unit lines
+		if (2 * ext / step > 400) then step = 1 end
+		while (2 * ext / step > 400) do step = step * 2 end
 		local n = floor(ext / step)
+		local reach = n * step
+		-- Long lines are cut into pieces so each piece can be lifted by its own distance
+		local segLen = 5
+		local nLines = 2 * (2 * n + 1)
+		while (nLines * math.ceil(2 * reach / segLen) > 3000) do segLen = segLen * 1.5 end
+		local pieces = math.max(1, math.ceil(2 * reach / segLen))
+		local pl = 2 * reach / pieces
+		local function line(x1, y1, x2, y2, w)
+			for k = 0, pieces - 1 do
+				local ax, ay = x1 + (x2 - x1) * (k / pieces), y1 + (y2 - y1) * (k / pieces)
+				local bx, by = x1 + (x2 - x1) * ((k + 1) / pieces), y1 + (y2 - y1) * ((k + 1) / pieces)
+				local z = 0.02 + math.max(lift(0, ax, ay), lift(0, bx, by))
+				pcall(draw_line_3d, ax, ay, z, bx, by, z, w)
+			end
+		end
 		for i = -n, n do
 			local v = i * step
-			local major = abs(v - MSV2.round(v, 1)) < 1e-6
 			if (i == 0) then
-				set_color(0.95, 0.3, 0.3, 0.7)
-				pcall(draw_line, -ext, 0, 0.006, ext, 0, 0.006, 2)
-				set_color(0.4, 0.85, 0.3, 0.7)
-				pcall(draw_line, 0, -ext, 0.006, 0, ext, 0.006, 2)
+				set_color(1, 0.35, 0.3, 0.8)
+				line(-reach, 0, reach, 0, 2.5)
+				set_color(0.4, 0.9, 0.35, 0.8)
+				line(0, -reach, 0, reach, 2.5)
 			else
-				set_color(1, 1, 1, major and 0.16 or 0.07)
-				pcall(draw_line, v, -ext, 0.005, v, ext, 0.005, 1)
-				pcall(draw_line, -ext, v, 0.005, ext, v, 0.005, 1)
+				local major = abs(v - MSV2.round(v, 1)) < 1e-6
+				if (major) then set_color(1, 1, 1, 0.4) else set_color(1, 1, 1, 0.18) end
+				line(v, -reach, v, reach, major and 1.5 or 1)
+				line(-reach, v, reach, v, major and 1.5 or 1)
 			end
 		end
 	end
-	-- Dojo outline on the floor
+	-- Dojo outline on the floor (square: half-width r, round: radius r)
 	local placing = placingPlayers()
 	if (MSV2.settings.showDojo or placing) then
 		local r, kind = MSV2.dojoShape()
 		if (r) then
 			local c = MSV2.dojoCenter()
-			local z = 0.012
-			set_color(1, 0.85, 0.3, placing and 0.9 or 0.45)
-			if (kind == 0) then
-				local x1, x2, y1, y2 = c[1] - r, c[1] + r, c[2] - r, c[2] + r
-				pcall(draw_line, x1, y1, z, x2, y1, z, 2)
-				pcall(draw_line, x2, y1, z, x2, y2, z, 2)
-				pcall(draw_line, x2, y2, z, x1, y2, z, 2)
-				pcall(draw_line, x1, y2, z, x1, y1, z, 2)
-			else
-				local seg = 64
-				for i = 0, seg - 1 do
-					local a1, a2 = i / seg * math.pi * 2, (i + 1) / seg * math.pi * 2
-					pcall(draw_line, c[1] + math.cos(a1) * r, c[2] + math.sin(a1) * r, z, c[1] + math.cos(a2) * r, c[2] + math.sin(a2) * r, z, 2)
+			local z = lift(0.03, c[1], c[2])
+			local w = placing and 4 or 3
+			-- Dark underlay then bright line, so it reads on any floor colour
+			for pass = 1, 2 do
+				if (pass == 1) then set_color(0, 0, 0, 0.5) else set_color(1, 0.85, 0.2, placing and 1 or 0.9) end
+				local zz = pass == 1 and z - 0.006 or z
+				local function sg(x1, y1, x2, y2)
+					pcall(draw_line_3d, x1, y1, zz, x2, y2, zz, pass == 1 and w + 2 or w)
+				end
+				if (kind == 0) then
+					local x1, x2, y1, y2 = c[1] - r, c[1] + r, c[2] - r, c[2] + r
+					sg(x1, y1, x2, y1); sg(x2, y1, x2, y2); sg(x2, y2, x1, y2); sg(x1, y2, x1, y1)
+				else
+					local n = 96
+					for i = 0, n - 1 do
+						local a1, a2 = i / n * math.pi * 2, (i + 1) / n * math.pi * 2
+						sg(c[1] + math.cos(a1) * r, c[2] + math.sin(a1) * r, c[1] + math.cos(a2) * r, c[2] + math.sin(a2) * r)
+					end
 				end
 			end
+			-- Short posts so the edge is visible from a low camera
+			set_color(1, 0.85, 0.2, 0.8)
+			local posts = {}
+			if (kind == 0) then
+				posts = { { c[1] - r, c[2] - r }, { c[1] + r, c[2] - r }, { c[1] + r, c[2] + r }, { c[1] - r, c[2] + r } }
+			else
+				for i = 0, 3 do posts[#posts + 1] = { c[1] + math.cos(i * math.pi / 2) * r, c[2] + math.sin(i * math.pi / 2) * r } end
+			end
+			for _, q in ipairs(posts) do pcall(draw_line_3d, q[1], q[2], 0.02, q[1], q[2], 0.35, w) end
 		end
 	end
 	-- Measuring line (depth tested so it sits in the world)
 	local m = MSV2.measure
 	if (m and m.a and m.b) then
 		set_color(0.35, 0.9, 1, 0.9)
-		pcall(draw_line, m.a[1], m.a[2], m.a[3] + 0.01, m.b[1], m.b[2], m.b[3] + 0.01, 3)
+		pcall(draw_line_3d, m.a[1], m.a[2], m.a[3] + 0.01, m.b[1], m.b[2], m.b[3] + 0.01, 3)
 	end
+end
 
+function MSV2.draw3d()
+	pcall(MSV2.updateProj)
+	-- Per-object 3D models (preview of use_model / model_name)
+	if (MSV2.drawModels) then pcall(MSV2.drawModels) end
 	-- Translucent fill for selected / hovered triangles, both windings
 	local tris = MSV2.selSplit()
 	local function fill(t, a)
@@ -1579,10 +1776,36 @@ end
 function MSV2.dragPush(btn)
 	local drag = G.drag
 	local ctx = MSV2.gizmoContext()
-	if (not drag or not ctx or ctx.kind ~= "env") then return 1 end
+	if (not drag or not ctx or (ctx.kind ~= "env" and ctx.kind ~= "player")) then return 1 end
+	-- A whole player is only ever held (preview); there is no pushing it along the view line
+	if (ctx.kind == "player" and not drag.held) then return 1 end
 	if (not drag.started) then
 		drag.started = true
-		MSV2.pushUndo("Move")
+		if (drag.ctx.kind ~= "player") then drag.undoPushed = true; MSV2.pushUndo("Move") end
+		-- Grab again from the current camera / cursor so nothing jumps
+		if (drag.held) then initHeld(drag, G.mouseX or drag.x0, G.mouseY or drag.y0) end
+	end
+	if (drag.held) then
+		-- Held object: the wheel changes its distance from the camera
+		local hd = drag.held
+		local step = math.max(0.1, hd.t * 0.1)
+		if (MSV2.snapActive() and MSV2.settings.gridStep > 0) then
+			step = math.max(MSV2.settings.gridStep, MSV2.round(step, MSV2.settings.gridStep))
+		end
+		local sign = (btn == 4) and 1 or -1
+		if (sign < 0) then step = math.min(step, math.max(0, hd.t - 0.6)) end
+		if (step <= 0) then
+			MSV2.toast("Can't pull it any closer")
+			return 1
+		end
+		hd.t = hd.t + sign * step
+		hd.msg = sign > 0 and "Pushed away" or "Pulled closer"
+		MSV2.tickHeld(drag)
+		if (not MSV2.pushHintShown) then
+			MSV2.pushHintShown = true
+			MSV2.toast("Scroll pushes the object away / pulls it closer. Shift+scroll zooms the camera instead")
+		end
+		return 1
 	end
 	local camPos = camVectors()
 	local dir = V.sub(ctx.pivot, camPos)
@@ -1702,7 +1925,10 @@ function MSV2.tickZoom()
 	end
 	judgeZoomProbe()
 	local drag = G.drag
-	if (drag and G.dragCam and G.mouseX) then
+	if (drag and drag.held) then
+		-- Held object: re-place it with this frame's camera (also when only the camera moved)
+		MSV2.tickHeld(drag)
+	elseif (drag and G.dragCam and G.mouseX) then
 		local camPos, look = camVectors()
 		if (V.dist(camPos, G.dragCam[1]) > 1e-4 or V.dist(look, G.dragCam[2]) > 1e-4) then
 			MSV2.carryWithCamera(drag, G.dragCam, { camPos, look })
@@ -1723,6 +1949,7 @@ end
 ---object along so it keeps its place in view (kept to the handle's axis /
 ---plane). Mod Studio's own zoom leaves it where it is.
 function MSV2.carryWithCamera(drag, old, new)
+	if (drag.held) then return end
 	if (MSV2.camAnim or MSV2.camRequest or G.camHold or G.zoomProbe) then return end
 	local ctx = MSV2.gizmoContext()
 	if (not ctx or ctx.kind ~= "env") then return end
@@ -1745,6 +1972,7 @@ function MSV2.carryWithCamera(drag, old, new)
 	if (V.len(d) < 1e-6) then return end
 	if (not drag.started) then
 		drag.started = true
+		drag.undoPushed = true
 		MSV2.pushUndo("Move")
 	end
 	MSV2.translateSelection(d)
@@ -1754,7 +1982,7 @@ end
 ---just mark the drag so the next mouse update re-anchors it with the camera as
 ---the game currently sees it (mouse rays can lag a frame behind the camera).
 function MSV2.rebaseDrag()
-	if (G.drag) then G.drag.needRebase = true end
+	if (G.drag and not G.drag.held) then G.drag.needRebase = true end
 end
 
 ---Re-anchors the drag at screen point (x, y) using the current camera
@@ -1762,6 +1990,8 @@ local function rebaseAt(drag, x, y)
 	drag.needRebase = nil
 	local ctx = MSV2.gizmoContext()
 	if (not ctx) then return end
+	-- Whole player: the preview already holds this much, new moves are relative to it
+	if (drag.pTotal) then drag.pBase = drag.pTotal end
 	drag.items = captureItems(ctx)
 	drag.pivot0 = V.copy(ctx.pivot)
 	drag.x0, drag.y0 = x, y
@@ -1925,6 +2155,13 @@ function MSV2.onMouseDown(btn, x, y)
 		local p, b, t = MSV2.pickBody(x, y)
 		if (p ~= nil and t < objDist) then
 			MSV2.UI.selectBody(p, b)
+			if (placingPlayers()) then
+				-- Place mode: click-drag the whole player, held under the cursor like an object
+				local ctx = MSV2.gizmoContext()
+				if (ctx and ctx.kind == "player") then
+					MSV2.beginDrag({ type = "direct" }, x, y, ctx)
+				end
+			end
 			return 1
 		end
 	end
@@ -1963,10 +2200,10 @@ function MSV2.onMouseDown(btn, x, y)
 			MSV2.UI.requestRefresh()
 		end
 		if (MSV2.settings.tool ~= "rotate" and MSV2.settings.tool ~= "scale") then
-			-- Click and drag an object to slide it along the ground (Alt: up/down)
+			-- Click and drag an object to hold it under the cursor at its current distance from the camera
 			local ctx = MSV2.gizmoContext()
 			if (ctx and ctx.kind == "env") then
-				MSV2.beginDrag({ type = "direct", vertical = altDown() }, x, y, ctx)
+				MSV2.beginDrag({ type = "direct" }, x, y, ctx)
 			end
 		end
 		return 1
@@ -2086,7 +2323,10 @@ local KEYS = {
 	pgdn = { [1073741902] = true, [281] = true },
 	del = { [127] = true, [1073741900] = true },
 	f1 = { [1073741882] = true, [282] = true },
-	f2 = { [1073741883] = true, [283] = true }
+	f2 = { [1073741883] = true, [283] = true },
+	f3 = { [1073741884] = true, [284] = true },
+	f4 = { [1073741885] = true, [285] = true },
+	f9 = { [1073741890] = true, [290] = true }
 }
 
 local consumed = {}
@@ -2096,6 +2336,11 @@ local function nudge(d)
 	if (not ctx) then return false end
 	local step = MSV2.settings.gridStep > 0 and MSV2.settings.gridStep or 0.1
 	if (shiftDown()) then step = step / 5 end
+	if (ctx.kind == "player") then
+		if (MSV2.faceFix) then return true end
+		MSV2.movePlayerBy(ctx.p, V.mul(d, step), { label = "Move player" })
+		return true
+	end
 	MSV2.pushUndo("Nudge", "nudge")
 	local drag = { ctx = ctx, items = captureItems(ctx), pivot0 = V.copy(ctx.pivot), A = M.identity(), worldFrame = true }
 	applyOp(drag, { move = V.mul(d, step) })
@@ -2150,17 +2395,19 @@ function MSV2.onKeyDown(key)
 		MSV2.saveProject(MSV2.saveName or "Untitled")
 	elseif (ctrl and ch == "e") then
 		MSV2.exportChecked(MSV2.saveName or "Untitled")
+	elseif (ctrl and ch == "r") then
+		MSV2.UI.renameNodes()
 	elseif (ctrl) then
 		handled = false
-	elseif (ch == "1") then
+	elseif (KEYS.f1[key]) then
 		MSV2.UI.setTool("select")
-	elseif (ch == "2") then
+	elseif (KEYS.f2[key]) then
 		MSV2.UI.setTool("move")
-	elseif (ch == "3") then
+	elseif (KEYS.f3[key]) then
 		MSV2.UI.setTool("rotate")
-	elseif (ch == "4") then
+	elseif (KEYS.f4[key]) then
 		MSV2.UI.setTool("scale")
-	elseif (ch == "5") then
+	elseif (KEYS.f9[key]) then
 		MSV2.UI.setTool("measure")
 	elseif (ch == "l") then
 		MSV2.UI.toggleSpace()
@@ -2168,10 +2415,8 @@ function MSV2.onKeyDown(key)
 		MSV2.UI.toggleSnap()
 	elseif (ch == "f") then
 		MSV2.focusSelection()
-	elseif (ch == "h" or KEYS.f1[key]) then
+	elseif (ch == "h") then
 		MSV2.UI.toggleHelp()
-	elseif (KEYS.f2[key]) then
-		MSV2.UI.renameNodes()
 	elseif (KEYS.del[key] or key == 8) then
 		MSV2.deleteSelected()
 	elseif (ch == "p") then

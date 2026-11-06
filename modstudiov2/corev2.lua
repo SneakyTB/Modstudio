@@ -134,7 +134,8 @@ MSV2.DEFAULT_SETTINGS = {
 	rotStep = 15,
 	scaleStep = 0.05,
 	showGrid = true,
-	gridExtent = 16,
+	gridExtent = 50,
+	gridFix = 0,            -- settings migrations done for the grid
 	showLabels = false,
 	showLinks = true,
 	gizmoSize = 95,
@@ -148,8 +149,11 @@ MSV2.DEFAULT_SETTINGS = {
 	camMethodOk = true,     -- true once camMethod is known to move the camera (hook confirmed in game)
 	camFix = 0,             -- settings migration marker for the camera method
 	objLimit = 0,           -- max env objects the game allows (0 = not measured yet)
-	surfaceSnap = true,     -- dragged objects rest on the surface under the cursor
+	surfaceSnap = true,     -- unused: object drags now hold the object at a fixed camera distance
 	showDojo = true,        -- draw the dojo outline on the floor
+	modelPreview = true,    -- draw each object's 3D model (use_model) in the editor
+	modelDepth = 2,         -- folders between data/mod_assets and the exported mod: 2 = modmaker/<name>, 1 = data/mod/<name>
+	assetNote = false,      -- add "This mod needs these assets" to the welcome message on export
 	symmetry = false,       -- mirror body/joint edits to the other side
 	bodyGizmo = true,
 	moveChildren = true,    -- moving a parent moves its children
@@ -200,6 +204,11 @@ function MSV2.loadSettings()
 	if ((tonumber(MSV2.settings.camFix) or 0) < 4) then
 		MSV2.settings.scrollPush = true
 		MSV2.settings.camFix = 4
+	end
+	-- The grid used to default to 16: move anyone still on the old default to the bigger grid
+	if ((tonumber(MSV2.settings.gridFix) or 0) < 1) then
+		if ((tonumber(MSV2.settings.gridExtent) or 16) == 16) then MSV2.settings.gridExtent = 50 end
+		MSV2.settings.gridFix = 1
 	end
 end
 
@@ -1192,11 +1201,23 @@ function MSV2.restore(s, forceRecreate)
 		end
 	end
 
+	local posBefore, rotBefore = MSV2.getRule("engageplayerpos"), MSV2.getRule("engageplayerrot")
 	MSV2.applyRules(s.rules)
+	for _, rn in ipairs({ "engageplayerpos", "engageplayerrot" }) do
+		-- setRule also tracks values the engine doesn't echo back
+		local want = s.rules and s.rules[rn]
+		if (want ~= nil and tostring(want) ~= tostring(MSV2.getRule(rn))) then MSV2.setRule(rn, want) end
+	end
 	if (MSV2.hierFix) then MSV2.hierFix() end
 
 	MSV2.markDirty()
 	MSV2.selClear()
+	-- Per-player start rules only take effect on a new match (undo / redo of a player move or turn)
+	if (s.rules and (tostring(MSV2.getRule("engageplayerpos")) ~= tostring(posBefore)
+		or tostring(MSV2.getRule("engageplayerrot")) ~= tostring(rotBefore))) then
+		MSV2.faceFix = nil
+		MSV2.restartMatch()
+	end
 end
 
 ---The game's mod maker can drop its objects on its own (seen when moving Tori's
@@ -2427,14 +2448,29 @@ function MSV2.applyRules(rules)
 	end
 end
 
+---Rules we set that the engine doesn't report back yet (some only take effect on a
+---new game): the value we set wins until the engine's own value changes
+MSV2.ruleShadow = MSV2.ruleShadow or {}
+
 function MSV2.getRule(name)
 	local ok, v = pcall(get_gamerule, name)
+	local sh = MSV2.ruleShadow[name]
+	if (sh) then
+		if (ok and tostring(v) == sh.eng) then return sh.v end
+		MSV2.ruleShadow[name] = nil
+	end
 	if (ok) then return v end
 	return nil
 end
 
 function MSV2.setRule(name, value)
 	pcall(set_gamerule, name, tostring(value))
+	local ok, back = pcall(get_gamerule, name)
+	if (ok and tostring(back) ~= tostring(value)) then
+		MSV2.ruleShadow[name] = { v = tostring(value), eng = tostring(back) }
+	else
+		MSV2.ruleShadow[name] = nil
+	end
 	MSV2.changed = true
 	MSV2.changedSinceAutosave = true
 end
@@ -2448,6 +2484,279 @@ function MSV2.restartMatch()
 		pcall(start_new_game)
 	end
 	MSV2.toast("Match restarted with the new rules")
+end
+
+---------------------------------------------------------------------------
+-- Turning a whole player around with the game's per-player start rules
+-- (engageplayerpos / engageplayerrot: "x,y,z" for each player, world units / degrees).
+-- The engine rotates the player as one piece, so no body part or joint is rewritten.
+-- Those rules replace engagedistance / height / rotation, and their exact origin and
+-- rotation sign can't be read from the API, so the result is measured after the
+-- restart and corrected (rotation first, then position) until the player is where
+-- and how it should be.
+---------------------------------------------------------------------------
+
+MSV2.faceFlipped = MSV2.faceFlipped or {}
+
+local function parseTriples(str, n)
+	local out = {}
+	for num in tostring(str or ""):gmatch("[%-%+]?[%d%.]+e?[%-%+]?%d*") do
+		local v = tonumber(num)
+		if (v) then out[#out + 1] = v end
+	end
+	if (#out < 3 * n) then return nil end
+	local any = false
+	for _, v in ipairs(out) do if (v ~= 0) then any = true end end
+	if (not any) then return nil end
+	local t = {}
+	for i = 1, n do t[i] = { out[3 * i - 2], out[3 * i - 1], out[3 * i] } end
+	return t
+end
+
+local function joinTriples(t)
+	local parts = {}
+	for _, v in ipairs(t) do parts[#parts + 1] = string.format("%.3f,%.3f,%.3f", v[1], v[2], v[3]) end
+	return table.concat(parts, ",")
+end
+
+local function yawOf(p)
+	local wr, wl = MSV2.bodyWorld(p, 5), MSV2.bodyWorld(p, 8)
+	if (not wr or not wl) then return nil end
+	return math.deg(math.atan2(wl.pos[2] - wr.pos[2], wl.pos[1] - wr.pos[1]))
+end
+
+local function angDiff(a, b)
+	local d = (a - b) % 360
+	if (d > 180) then d = d - 360 end
+	return d
+end
+
+local function applyFace(f)
+	MSV2.setRule("engageplayerpos", joinTriples(f.pos))
+	MSV2.setRule("engageplayerrot", joinTriples(f.rot))
+	MSV2.restartMatch()
+	f.wait = 12
+end
+
+---The per-player start rules as lists of {x,y,z} (index 1 = Tori). When they aren't custom
+---yet they are initialised from where each player is drawn now (c0 = world centres,
+---yaw0 = facing), the same way for every player.
+function MSV2.startRules(n, c0, yaw0)
+	local V = MSV2.V
+	local pos = parseTriples(MSV2.getRule("engageplayerpos"), n)
+	local rot = pos and parseTriples(MSV2.getRule("engageplayerrot"), n) or nil
+	if (not pos) then
+		-- Not custom yet: start from where each player is drawn now
+		pos, rot = {}, {}
+		for i = 0, n - 1 do
+			local W = MSV2.playerFrame(i)
+			local mc = MSV2.playerModCenter(i) or { 0, 0, 0 }
+			local o = V.sub(c0[i], MSV2.M.apply(W, mc))
+			pos[i + 1] = o
+			-- Yaw the mod coordinates are turned by (assumes the engine's +z turns the same way)
+			local wr, wl = MSV2.bodies[i] and MSV2.bodies[i][5], MSV2.bodies[i] and MSV2.bodies[i][8]
+			local ym = (wr and wl) and math.deg(math.atan2(wl.pos_y - wr.pos_y, wl.pos_x - wr.pos_x)) or 0
+			rot[i + 1] = { 0, 0, angDiff(yaw0[i], ym) }
+		end
+	end
+	rot = rot or {}
+	for i = 1, n do rot[i] = rot[i] or { 0, 0, 0 } end
+	return pos, rot
+end
+
+---Starts turning player p around (press again to turn back)
+function MSV2.faceToggle(p)
+	local n = math.max(2, MSV2.numPlayers or 2)
+	local V = MSV2.V
+	local f = { p = p, n = n, c0 = {}, yaw0 = {}, tries = 0 }
+	for i = 0, n - 1 do
+		f.c0[i] = MSV2.playerWorldCenter(i)
+		f.yaw0[i] = yawOf(i)
+		if (not f.c0[i] or not f.yaw0[i]) then
+			MSV2.toast("Can't read where the players are right now")
+			return false
+		end
+	end
+	local pos, rot = MSV2.startRules(n, f.c0, f.yaw0)
+	f.pos, f.rot = pos, rot
+	f.rotBase = {}
+	for i = 1, n do f.rotBase[i] = rot[i][3] end
+	-- Expected result: everybody where and how they were, the chosen player turned 180
+	f.want = {}
+	for i = 0, n - 1 do f.want[i] = f.yaw0[i] + (i == p and 180 or 0) end
+	rot[p + 1][3] = rot[p + 1][3] + 180
+	f.rotBase[p + 1] = rot[p + 1][3]
+	MSV2.pushUndo("Face the other way")
+	MSV2.faceFlipped[p] = not MSV2.faceFlipped[p]
+	MSV2.faceFix = f
+	applyFace(f)
+	return true
+end
+
+---Moves one whole player by world offset d by changing ONLY that player's entry in
+---engageplayerpos (everybody else's values and engageplayerrot stay), then restarts the
+---match and lets tickFace measure / correct the result. opts.previewed: the player is
+---currently drawn already shifted by d (drag preview). opts.label: undo step name.
+function MSV2.movePlayerBy(p, d, opts)
+	opts = opts or {}
+	local n = math.max(2, MSV2.numPlayers or 2)
+	local V = MSV2.V
+	local f = { p = p, n = n, c0 = {}, yaw0 = {}, tries = 0, want = {} }
+	for i = 0, n - 1 do
+		f.c0[i] = MSV2.playerWorldCenter(i)
+		f.yaw0[i] = yawOf(i)
+		if (not f.c0[i] or not f.yaw0[i]) then
+			MSV2.toast("Can't read where the players are right now")
+			return false
+		end
+		f.want[i] = f.yaw0[i]
+	end
+	-- Where p was before the move (the rules describe the match start, not the preview)
+	if (opts.previewed) then f.c0[p] = V.sub(f.c0[p], d) end
+	local pos, rot = MSV2.startRules(n, f.c0, f.yaw0)
+	if (opts.label) then MSV2.pushUndo(opts.label) end
+	pos[p + 1] = V.add(pos[p + 1], d)
+	f.c0[p] = V.add(f.c0[p], d)
+	f.pos, f.rot = pos, rot
+	MSV2.faceFix = f
+	applyFace(f)
+	return true
+end
+
+---True when the per-player start rules hold custom positions
+function MSV2.hasCustomPlacement()
+	local n = math.max(2, MSV2.numPlayers or 2)
+	return parseTriples(MSV2.getRule("engageplayerpos"), n) ~= nil
+end
+
+---Back to the game's own placement (engagedistance / engageheight / engagerotation, default
+---facing): both per-player rules are unset ("0" = off, which is what the game's own rule editor
+---writes), the turned-around flags are forgotten. restart: start a new match so it shows.
+function MSV2.clearPlacement(restart)
+	local n = math.max(2, MSV2.numPlayers or 2)
+	local z = {}
+	for i = 1, n do z[i] = "0,0,0" end
+	MSV2.faceFix = nil
+	MSV2.faceFlipped = {}
+	MSV2.setRule("engageplayerpos", "0")
+	MSV2.setRule("engageplayerrot", table.concat(z, ","))
+	if (restart) then MSV2.restartMatch() end
+end
+
+---Where every player is drawn now: centres and yaws, or nil if they can't be read
+function MSV2.measurePlayers()
+	local n = math.max(2, MSV2.numPlayers or 2)
+	local m = { c = {}, yaw = {} }
+	for i = 0, n - 1 do
+		m.c[i] = MSV2.playerWorldCenter(i)
+		m.yaw[i] = yawOf(i)
+		if (not m.c[i] or not m.yaw[i]) then return nil end
+	end
+	return m
+end
+
+---Puts only player p back at the game's default place / facing while the other players keep
+---their custom start position and rotation. prior = MSV2.measurePlayers() from before the
+---reset. Step A: remember the rules, clear them, restart. Step B (tickFace, phaseA): measure
+---the defaults, rebuild the rules from them (p = default, the others = remembered), restart
+---and let the normal measure-and-correct loop line everybody up.
+function MSV2.resetPlayerPlacement(p, prior, doneMsg)
+	local n = math.max(2, MSV2.numPlayers or 2)
+	local savedPos = parseTriples(MSV2.getRule("engageplayerpos"), n)
+	if (not savedPos or not prior) then
+		MSV2.clearPlacement(true)
+		return
+	end
+	local savedRot = parseTriples(MSV2.getRule("engageplayerrot"), n) or {}
+	for i = 1, n do savedRot[i] = savedRot[i] or { 0, 0, 0 } end
+	local f = {
+		p = p, n = n, c0 = {}, yaw0 = {}, want = {}, tries = 0, phaseA = true,
+		savedPos = savedPos, savedRot = savedRot, prior = prior,
+		doneMsg = doneMsg, failMsg = "Reset, but couldn't line the players up exactly - check the start position"
+	}
+	local z = {}
+	for i = 1, n do z[i] = "0,0,0" end
+	MSV2.faceFlipped[p] = nil
+	MSV2.setRule("engageplayerpos", "0")
+	MSV2.setRule("engageplayerrot", table.concat(z, ","))
+	MSV2.faceFix = f
+	MSV2.restartMatch()
+	f.wait = 12
+end
+
+---Per frame: once the restarted match has settled, check the result and correct it
+function MSV2.tickFace()
+	local f = MSV2.faceFix
+	if (not f) then return end
+	if (f.wait > 0) then f.wait = f.wait - 1; return end
+	if (MSV2.needRefresh) then return end
+	if (f.phaseA) then
+		-- The match now starts with no custom rules: these are the default places
+		local c, y = {}, {}
+		for i = 0, f.n - 1 do
+			c[i], y[i] = MSV2.playerWorldCenter(i), yawOf(i)
+			if (not c[i] or not y[i]) then f.wait = 5; return end
+		end
+		local pos, rot = MSV2.startRules(f.n, c, y)
+		for i = 0, f.n - 1 do
+			if (i == f.p) then
+				f.c0[i], f.want[i] = c[i], y[i]
+			else
+				pos[i + 1], rot[i + 1] = f.savedPos[i + 1], f.savedRot[i + 1]
+				f.c0[i], f.want[i] = f.prior.c[i], f.prior.yaw[i]
+			end
+		end
+		f.pos, f.rot = pos, rot
+		f.phaseA = nil
+		f.tries = 0
+		applyFace(f)
+		return
+	end
+	local worst, errs, perr = 0, {}, {}
+	for i = 0, f.n - 1 do
+		local c, y = MSV2.playerWorldCenter(i), yawOf(i)
+		if (not c or not y) then f.wait = 5; return end
+		errs[i] = angDiff(y, f.want[i])
+		perr[i] = MSV2.V.sub(c, f.c0[i])
+		worst = math.max(worst, math.abs(errs[i]))
+	end
+	local posBad = false
+	for i = 0, f.n - 1 do
+		if (MSV2.V.len({ perr[i][1], perr[i][2], perr[i][3] }) > 0.05) then posBad = true end
+	end
+	if (worst <= 3 and not posBad) then
+		MSV2.faceFix = nil
+		MSV2.toast(f.doneMsg or "Turned around")
+		return
+	end
+	f.tries = f.tries + 1
+	if (f.tries > 6) then
+		MSV2.faceFix = nil
+		MSV2.toast(f.failMsg or "Turned, but couldn't line the player up exactly - check the start position")
+		return
+	end
+	if (worst > 3) then
+		-- Rotation first. Try the error with the assumed sign, then the opposite sign.
+		for i = 0, f.n - 1 do
+			if (math.abs(errs[i]) > 3) then
+				f.signTry = f.signTry or {}
+				local last = f.signTry[i]
+				if (last and math.abs(errs[i]) > math.abs(last.err) * 0.5) then
+					-- That direction didn't help: go the other way from the original value
+					f.rot[i + 1][3] = last.base + last.err * (last.dir == -1 and 1 or -1)
+					f.signTry[i] = { base = last.base, err = last.err, dir = -last.dir }
+				else
+					f.signTry[i] = { base = f.rot[i + 1][3], err = errs[i], dir = -1 }
+					f.rot[i + 1][3] = f.rot[i + 1][3] - errs[i]
+				end
+			end
+		end
+	else
+		for i = 0, f.n - 1 do
+			f.pos[i + 1] = MSV2.V.sub(f.pos[i + 1], perr[i])
+		end
+	end
+	applyFace(f)
 end
 
 ---------------------------------------------------------------------------
@@ -2540,13 +2849,19 @@ end
 function MSV2.exportMod(name)
 	name = MSV2.safeName(name)
 	MSV2.flush(true)
+	if (MSV2.settings.assetNote and MSV2.appendAssetNote and MSV2.assetReport) then
+		local rep = MSV2.assetReport(true)
+		if (#rep.order > 0) then pcall(MSV2.appendAssetNote, "list") end
+	end
 	local ok, written = pcall(export_mod_maker, name)
 	if (ok and written) then
 		MSV2.saveName = (tostring(written):gsub("^modmaker/", ""):gsub("%.tbm$", ""))
 		MSV2.changed = false
 		-- Keep a project file next to the export so names/triangles survive
 		MSV2.saveProject(MSV2.saveName, true)
-		MSV2.toast("Exported data/mod/" .. tostring(written) .. " - load it from the Mods menu")
+		MSV2.lastExport = tostring(written)
+		local extra = MSV2.afterExport and MSV2.afterExport(written) or ""
+		MSV2.toast("Exported data/mod/" .. tostring(written) .. " - load it from the Mods menu" .. (extra ~= "" and (" (" .. extra .. ")") or ""))
 		echo("Mod Studio: exported " .. tostring(written))
 		return written
 	end
@@ -2560,6 +2875,11 @@ function MSV2.importMod(name)
 	if (ok and res) then
 		MSV2.meta, MSV2.tris = {}, {}
 		MSV2.reloadAll()
+		-- Per-object models live only in the file (the mod maker API can't see them)
+		local nm = MSV2.readModelLines and MSV2.readModelLines(name) or 0
+		if (nm > 0) then
+			MSV2.toast("Imported " .. name .. " - " .. nm .. " object" .. (nm == 1 and "" or "s") .. " use 3D models")
+		end
 		MSV2.saveName = (name:gsub("^modmaker/", ""):gsub("%.tbm$", ""))
 		MSV2.markDirty()
 		MSV2.changed = false
@@ -2722,6 +3042,11 @@ local RESET_LABELS = {
 function MSV2.resetTo(what)
 	local label = RESET_LABELS[what] or "Reset"
 	local keep = MSV2.snapshot()
+	-- Whole-player placement lives in rules (engageplayerpos / engageplayerrot): note where
+	-- everybody is drawn now, so a single-player reset can leave the others exactly there
+	local hadPlacement = MSV2.hasCustomPlacement()
+	local prior = (type(what) == "number" and hadPlacement) and MSV2.measurePlayers() or nil
+	MSV2.faceFix = nil
 	local okm, msg = pcall(get_mod_message)
 	local oku, um = pcall(get_mod_use_model)
 	local okn, mn = pcall(get_mod_model_name)
@@ -2758,7 +3083,25 @@ function MSV2.resetTo(what)
 	end
 	MSV2.markDirty()
 	MSV2.selClear()
-	MSV2.toast(label .. " done - Ctrl+Z undoes it")
+	-- Default position + facing (the game's own placement when the start rules are unset)
+	local who = label:gsub("^Reset ", "")
+	local toastMsg = label .. " done - Ctrl+Z undoes it"
+	if (type(what) == "number") then
+		toastMsg = who .. " reset to the default position - Ctrl+Z undoes it"
+		if (hadPlacement) then
+			-- The others keep their custom place: async measure-and-correct, toast when settled
+			MSV2.resetPlayerPlacement(what, prior, who .. " reset to the default position")
+			toastMsg = nil
+		else
+			MSV2.faceFlipped[what] = nil
+		end
+	elseif (hadPlacement or MSV2.hasCustomPlacement()) then
+		MSV2.clearPlacement(true)
+		toastMsg = label .. " done (players back at the default position) - Ctrl+Z undoes it"
+	else
+		MSV2.clearPlacement(false)
+	end
+	if (toastMsg) then MSV2.toast(toastMsg) end
 	return true
 end
 

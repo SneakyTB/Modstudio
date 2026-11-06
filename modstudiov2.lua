@@ -28,6 +28,7 @@ dofile("modstudiov2/layoutv2.lua")
 dofile("modstudiov2/uiv2.lua")
 dofile("modstudiov2/iconsv2.lua")
 dofile("modstudiov2/extrasv2.lua")
+dofile("modstudiov2/modelsv2.lua")
 
 local MSV2 = MSV2
 
@@ -76,6 +77,7 @@ function MSV2.tick()
 	MSV2.tickZoom()
 	if (not MSV2.testMode and not (MSV2.calib and not MSV2.calib.done)) then
 		MSV2.tickRepair()
+		if (MSV2.tickFace) then pcall(MSV2.tickFace) end
 		MSV2.tickWorldMap()
 	end
 	MSV2.UI.tick()
@@ -99,6 +101,12 @@ function MSV2.addHooks()
 		local ok, err = pcall(MSV2.draw3d)
 		if (not ok) then MSV2.reportError(err) end
 		ok, err = pcall(MSV2.buildFrame)
+		if (not ok) then MSV2.reportError(err) end
+	end)
+	-- Floor lines are drawn here: draw_line_3d isn't batched and needs to run after everything else
+	add_hook("post_draw3d", H, function()
+		if (not MSV2.active or MSV2.testMode) then return end
+		local ok, err = pcall(MSV2.drawFloor3d)
 		if (not ok) then MSV2.reportError(err) end
 	end)
 	add_hook("draw2d", H, function()
@@ -187,6 +195,8 @@ function MSV2.close(force)
 end
 
 function MSV2.shutdown()
+	-- Release the 3D models loaded for the preview
+	if (MSV2.unloadModels) then pcall(MSV2.unloadModels) end
 	-- Editor-only hiding must not stay behind in the mod maker
 	if (MSV2.revealAllHidden) then pcall(MSV2.revealAllHidden) end
 	if (MSV2.changedSinceAutosave and MSV2.settings.autosave) then

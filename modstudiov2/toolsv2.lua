@@ -1197,6 +1197,11 @@ function MSV2.checkMod()
 	add("info", "fully see-through (colour alpha 0) but still solid", clear)
 	add("info", "invisible (still solid - fine for invisible walls)", invisible)
 
+	-- 3D model files and textures (modelsv2.lua)
+	if (MSV2.assetIssues) then
+		for _, it in ipairs(MSV2.assetIssues(false)) do table.insert(issues, it) end
+	end
+
 	-- Object budget
 	local limit = MSV2.settings.objLimit or 0
 	local n = #all
@@ -1225,6 +1230,7 @@ end
 
 ---Export, but first show any warnings from the check
 function MSV2.exportChecked(name)
+	if (MSV2.assetReport) then pcall(MSV2.assetReport, true) end
 	local warns = 0
 	for _, it in ipairs(MSV2.checkMod()) do
 		if (it.severity == "warn") then warns = warns + 1 end
