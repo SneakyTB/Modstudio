@@ -166,7 +166,7 @@ UI.TEXT_MIN = 0.85 -- text may shrink to this fraction of its role size before w
 
 ---BadaBoom is far larger per unit scale than font 4, so it has its own (smaller) role sizes
 ---(these match the pre-unification header looks: bars 0.5, pane headings/dock title 0.5, dialog titles 0.65).
-UI.TITLE_TEXT = { small = 0.34, body = 0.36, heading = 0.4, title = 0.55 }
+UI.TITLE_TEXT = { small = 0.34, body = 0.36, heading = 0.27, title = 0.36, brand = 0.4 } -- brand: the toolbar "Mod Studio" title, locked
 UI.TITLE_MIN = 0.65 -- headings in the big font may shrink to this fraction before truncating
 UI.WORD_MIN = 0.7 -- single words (tabs, short buttons) may shrink to this fraction before truncating
 
@@ -183,16 +183,43 @@ function UI.textSize(role, font)
 	return best
 end
 
----Draw text in `el` at exactly its role size (never shrunk, so same-role text always matches).
+---Smallest fraction of its role size that text may shrink to before it is cut.
+UI.FIT_MIN = 0.7
+
+---Width of `str` at scale 1, or nil when it can't be measured
+function UI.textWidth(str, font)
+	local ok, w = pcall(get_string_length, tostring(str or ""), font or 4)
+	if (ok and type(w) == "number" and w > 0) then return w end
+	return nil
+end
+
+---Fraction (at most 1) of the role size at which `str` fits `avail` pixels on one line.
+---Same width-only measurement UI.addText uses, so groups and single labels agree.
+function UI.fitFrac(str, avail, role, font)
+	local tw = UI.textWidth(str, font)
+	if (not tw or not avail or avail <= 0) then return 1 end
+	local top = UI.textSize(role, font) * UI.textK
+	if (top <= 0) then return 1 end
+	return math.min(1, avail / (tw * top))
+end
+
+---Shared scale for a group: the smallest fit, never below `floor` (default UI.FIT_MIN)
+function UI.groupFrac(fracs, floor)
+	local m = 1
+	for _, f in ipairs(fracs) do if (f < m) then m = f end end
+	return math.max(floor or UI.FIT_MIN, m)
+end
+
+---Draw text in `el`. One-line text shrinks to fit its width (down to UI.FIT_MIN of the role size),
+---then loses a trailing "(...)" note, then is cut with "...".
+---`frac` forces a scale (fraction of the role size) so a group of neighbours can share one;
+---it still drops the note / cuts with "..." if the text doesn't fit even then.
 ---Never breaks inside a word; wraps only strings with spaces in boxes tall enough for two lines.
----A one-line string that's too long first loses a trailing "(...)" note, then is cut with "...".
-function UI.addText(el, override, str, x, y, font, align, role)
+function UI.addText(el, override, str, x, y, font, align, role, frac)
 	local top = UI.textSize(role, font) * UI.textK
 	str = tostring(str or "")
 	local isTitle = font ~= nil and font == UI.TITLE_FONT and font ~= 4
 	local hasSpace = str:find("%s") ~= nil
-	local frac = isTitle and UI.TITLE_MIN or (hasSpace and UI.TEXT_MIN or UI.WORD_MIN)
-	local low = top * frac
 	local sc = top
 	local tallBox = override or (el.size and el.size.h and el.size.h >= ROW * 1.6)
 	-- One-line text is checked by width only: uiText's own check also fails when a line is taller
@@ -200,38 +227,66 @@ function UI.addText(el, override, str, x, y, font, align, role)
 	local xoff = (type(x) == "table") and ((tonumber(x[1]) or 0) + (tonumber(x[2]) or 0)) or ((tonumber(x) or 0) * 2)
 	local avail = ((el.size and el.size.w) or 0) - xoff - 2
 	local function fits(t, s)
-		if (hasSpace and tallBox and not isTitle) then
-			local ok, f = pcall(el.uiText, el, t, x, y, font, nil, s, nil, nil, nil, nil, nil, true)
-			return ok and f
-		end
 		if (avail <= 0) then return true end
-		local ok, w = pcall(get_string_length, t, font or 4)
-		if (not ok or not w) then return true end
-		return w * s <= avail
+		local tw = UI.textWidth(t, font)
+		if (not tw) then return true end
+		return tw * s <= avail
 	end
-	-- Every piece of text of a role is drawn at exactly the role size (no shrink-to-fit), so
-	-- neighbours always match. Too long: drop a trailing "(...)" note, then cut with "...".
-	local _ = low
-	local tall = tallBox
-	if (not (hasSpace and tall) and not fits(str, sc)) then
-		local short = str:gsub("%s*%b()%s*$", "")
-		if (short ~= "" and short ~= str and fits(short, sc)) then str = short end
-	end
-	if (not (hasSpace and tall) and not fits(str, sc)) then
-		-- single line: trim characters until it fits, then add "..."
-		local t = str
-		while (#t > 1) do
-			t = t:sub(1, #t - 1)
-			if (fits(t .. "...", sc)) then break end
+	local wraps = hasSpace and tallBox and not isTitle
+	if (not wraps) then
+		if (frac) then
+			sc = top * frac
+			if (not fits(str, sc)) then
+				local short = str:gsub("%s*%b()%s*$", "")
+				if (short ~= "" and short ~= str and fits(short, sc)) then str = short end
+			end
+			if (not fits(str, sc)) then
+				local t = str
+				while (#t > 1) do
+					t = t:sub(1, #t - 1)
+					if (fits(t .. "...", sc)) then break end
+				end
+				str = t .. "..."
+			end
+		else
+			-- Largest scale in [FIT_MIN, 1] x role size at which s fits, or nil
+			local function pick(s)
+				if (fits(s, top)) then return top end
+				local tw = UI.textWidth(s, font)
+				if (not tw or avail <= 0) then return top end
+				local f = math.floor(avail / (tw * top) * 1000) / 1000
+				if (f >= UI.FIT_MIN) then return top * f end
+				return nil
+			end
+			local p = pick(str)
+			if (not p) then
+				local short = str:gsub("%s*%b()%s*$", "")
+				if (short ~= "" and short ~= str) then
+					p = pick(short)
+					if (p) then str = short end
+				end
+			end
+			if (p) then
+				sc = p
+			else
+				sc = top * UI.FIT_MIN
+				local t = str
+				while (#t > 1) do
+					t = t:sub(1, #t - 1)
+					if (fits(t .. "...", sc)) then break end
+				end
+				str = t .. "..."
+			end
 		end
-		str = t .. "..."
+	elseif (frac) then
+		sc = top * frac
 	end
 	el:addAdaptedText(override, str, x, y, font, align, sc, sc)
 end
 
-local function label(parent, x, y, w, h, str, align, scale, font)
+local function label(parent, x, y, w, h, str, align, scale, font, frac)
 	local l = parent:addChild({ pos = { x, y }, size = { w, h } })
-	UI.addText(l, false, str, nil, nil, font or 4, align or LEFTMID, scale or "body")
+	UI.addText(l, false, str, nil, nil, font or 4, align or LEFTMID, scale or "body", frac)
 	return l
 end
 UI.label = label
@@ -265,6 +320,36 @@ UI.LABEL_ICONS = {
 	["Grid on"] = "grid", ["Grid off"] = "grid", ["Scale whole player"] = "scale", ["Put at midpoint"] = "move",
 }
 
+---Which icon a button of this size keeps, and the fraction of the role size its label fits at.
+---The icon is dropped when the label would have to shrink below UI.FIT_MIN beside it (same
+---measurement as UI.addText, accounting for the label offset the button reserves for the icon).
+function UI.buttonFit(w, h, text, o)
+	local hasText = text and text ~= ""
+	local icon = o.icon
+	if (not icon and hasText and not o.noAutoIcon) then icon = UI.LABEL_ICONS[text] end
+	if (not hasText) then return icon, 1 end
+	local role = o.scale or "body"
+	local function availFor(withIcon)
+		local shift = withIcon and (h + 2) or (o.align == LEFTMID and 6 or 0)
+		return w - shift * 2 - 2
+	end
+	if (icon and UI.fitFrac(text, availFor(true), role, 4) < UI.FIT_MIN) then icon = nil end
+	return icon, UI.fitFrac(text, availFor(icon ~= nil), role, 4)
+end
+
+---Appends to `fracs` the label fit of every button in `items` when each is `w` x `h`
+local function rowFracs(w, h, items, fracs)
+	fracs = fracs or {}
+	for _, it in ipairs(items) do
+		if (it[1] and it[1] ~= "") then
+			local _, f = UI.buttonFit(w, h, it[1], { icon = it.icon, scale = it.scale })
+			table.insert(fracs, f)
+		end
+	end
+	return fracs
+end
+UI.rowFracs = rowFracs
+
 ---Button. o: active, disabled, tip, color, scale, align,
 ---icon (name from icons.lua; with empty text the button is icon only, otherwise the icon sits left of the text),
 ---iconDim (draw the icon faded, for an "off" state)
@@ -280,21 +365,15 @@ local function button(parent, x, y, w, h, text, onClick, o)
 		inactiveColor = C.darkest
 	})
 	local hasText = text and text ~= ""
-	local icon = o.icon
-	if (not icon and hasText and not o.noAutoIcon) then icon = UI.LABEL_ICONS[text] end
-	if (icon and hasText) then
-		-- Icon + label only when both fit; otherwise the label wins (it says more)
-		local ok, tw = pcall(get_string_length, text, 4)
-		-- The label shrinks to fit beside the icon; only give up when it would get too small
-		if (ok and tw and (w - h - 4) < tw * UI.textSize(o.scale or "body") * UI.textK * 0.6) then icon = nil end
-	end
+	-- Icon + label only when the label fits beside the icon at no less than UI.FIT_MIN; otherwise the label wins
+	local icon = UI.buttonFit(w, h, text, o)
 	if (icon) then
 		UI.addIcon(b, icon, { bg = bg, disabled = o.disabled, dim = o.iconDim, box = hasText and { 2, 0, h, h } or nil })
 	end
 	if (hasText) then
 		local shift = o.align == LEFTMID and 6 or nil
 		if (icon) then shift = h + 2 end
-		UI.addText(b, false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), o.scale or "body")
+		UI.addText(b, false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), o.scale or "body", o.fit)
 	end
 	if (onClick and not o.disabled) then
 		b:addMouseHandlers(nil, function() onClick() end)
@@ -307,12 +386,25 @@ end
 UI.button = button
 
 ---Row of evenly sized buttons. items = { { text, fn, active = , tip = , disabled = } }
-local function buttonRow(parent, x, y, w, h, items)
+---All labels in the row share one scale (the smallest fit, floor UI.FIT_MIN) so neighbours match.
+---`fit` overrides it, for a grid of several rows that must share a scale.
+local function buttonRow(parent, x, y, w, h, items, fit)
 	local n = #items
 	local bw = (w - GAP * (n - 1)) / n
+	fit = fit or UI.groupFrac(rowFracs(bw, h, items))
 	for i, it in ipairs(items) do
-		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled, icon = it.icon })
+		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled, icon = it.icon, fit = fit })
 	end
+end
+
+---Shared scale for a grid made of several rows of items in `w` total width
+function UI.gridFit(w, h, rows)
+	local fracs = {}
+	for _, items in ipairs(rows) do
+		local n = #items
+		if (n > 0) then rowFracs((w - GAP * (n - 1)) / n, h, items, fracs) end
+	end
+	return UI.groupFrac(fracs)
 end
 
 ---Text input. o: numeric, live (getter for auto refresh), placeholder, align
@@ -393,7 +485,7 @@ local function numRow(holder, y, w, e)
 	local lw = floor(w * 0.44)
 	local lab = holder:addChild({ pos = { 0, y }, size = { lw - 2, ROW }, interactive = true,
 		bgColor = C.clear, hoverColor = C.shade, pressedColor = C.shade, shapeType = ROUNDED, rounded = UI.r(3) })
-	UI.addText(lab, false, e.label, 4, nil, 4, LEFTMID, "body")
+	UI.addText(lab, false, e.label, 4, nil, 4, LEFTMID, "body", e.labelFit)
 	scrub(lab, e.get, function(v) e.set(clampEntry(e, v)) end, e.step or 0.1, { int = e.int, min = e.min, max = e.max, tip = e.tip })
 	local function nudge(d)
 		if (MS.shiftDown()) then d = d * 10 end
@@ -411,7 +503,7 @@ end
 ---label | X [  ] Y [  ] Z [  ]   (drag the letters to scrub)
 local function vec3Row(holder, y, w, e)
 	local lw = floor(w * 0.26)
-	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body")
+	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body", nil, e.labelFit)
 	local cw = (w - lw) / 3
 	local letters = e.letters or { "X", "Y", "Z" }
 	for k = 1, 3 do
@@ -429,7 +521,7 @@ end
 
 local function sliderRow(holder, y, w, e)
 	local lw = floor(w * 0.36)
-	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body")
+	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body", nil, e.labelFit)
 	local sh = holder:addChild({ pos = { lw, y }, size = { w - lw, ROW } })
 	local s = TBMenu:spawnSlider2(sh, nil, e.get() or 0, {
 		minValue = e.min or 0, maxValue = e.max or 255, decimal = e.decimal or 0, darkerMode = true,
@@ -447,7 +539,7 @@ local function toggleRow(holder, y, w, e)
 		e.set(val == true or val == 1)
 	end)
 	local lab = holder:addChild({ pos = { ROW + 6, y }, size = { w - ROW - 6, ROW }, interactive = e.tip ~= nil, bgColor = C.clear, hoverColor = C.clear, pressedColor = C.clear })
-	UI.addText(lab, false, e.label, nil, nil, 4, LEFTMID, "body")
+	UI.addText(lab, false, e.label, nil, nil, 4, LEFTMID, "body", e.labelFit)
 	if (e.tip) then
 		lab:addMouseHandlers(nil, nil, function() UI.setTip(e.tip, lab) end)
 	end
@@ -455,13 +547,13 @@ end
 
 local function textRow(holder, y, w, e)
 	local lw = floor(w * 0.36)
-	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body")
+	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body", nil, e.labelFit)
 	field(holder, lw, y, w - lw, ROW, e.get() or "", { align = LEFTMID, placeholder = e.placeholder, enter = e.enter }, function(s) e.set(s) end)
 end
 
 local function choiceRow(holder, y, w, e)
 	local lw = e.label and floor(w * 0.36) or 0
-	if (e.label) then label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body") end
+	if (e.label) then label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body", nil, e.labelFit) end
 	local cur = e.get()
 	local items = {}
 	for _, opt in ipairs(e.options) do
@@ -547,11 +639,50 @@ function UI.renderEntry(holder, y, e, w)
 	elseif (k == "choice") then
 		choiceRow(holder, y, w, e)
 	elseif (k == "buttons") then
-		buttonRow(holder, 0, y, w, ROW, e.items)
+		buttonRow(holder, 0, y, w, ROW, e.items, e.fit)
 	elseif (k == "swatches") then
 		swatchesRow(holder, y, w, e)
 	elseif (k == "custom") then
 		e.render(holder, y, w)
+	end
+end
+
+---Shared text scales across an entry list, so neighbours match:
+---consecutive "buttons" entries form one grid (one scale, floor UI.FIT_MIN), and the left labels of
+---num / vec3 / slider / text / choice / toggle rows share one scale (floor 0.8, from the longest label).
+function UI.prepareFits(entries, w)
+	local i, n = 1, #entries
+	while (i <= n) do
+		if (entries[i].kind == "buttons" and entries[i].items) then
+			local j, rows = i, {}
+			while (j <= n and entries[j].kind == "buttons" and entries[j].items) do
+				table.insert(rows, entries[j].items)
+				j = j + 1
+			end
+			local fit = UI.gridFit(w, ROW, rows)
+			for k = i, j - 1 do entries[k].fit = fit end
+			i = j
+		else
+			i = i + 1
+		end
+	end
+	local fracs, users = {}, {}
+	for _, e in ipairs(entries) do
+		local k, av = e.kind, nil
+		if (type(e.label) == "string" and e.label ~= "") then
+			if (k == "num") then av = floor(w * 0.44) - 2 - 8 - 2
+			elseif (k == "vec3") then av = floor(w * 0.26) - 4 - 2
+			elseif (k == "slider" or k == "text" or k == "choice") then av = floor(w * 0.36) - 4 - 2
+			elseif (k == "toggle") then av = w - ROW - 6 - 2 end
+		end
+		if (av) then
+			table.insert(fracs, UI.fitFrac(e.label, av, "body", 4))
+			table.insert(users, e)
+		end
+	end
+	if (#users > 0) then
+		local fit = UI.groupFrac(fracs, 0.8)
+		for _, e in ipairs(users) do e.labelFit = fit end
 	end
 end
 
@@ -573,6 +704,7 @@ function UI.paged(parent, topY, height, entries, pageKey, render)
 	local avail = holder.size.h + GAP
 	local scrolling = total > avail
 	local w = scrolling and (fullW - SCROLL_W - GAP * 2) or fullW
+	if (render == UI.renderEntry) then UI.prepareFits(entries, w) end
 	-- Highest first entry that still fills the view to the bottom
 	local maxFirst, acc = #entries, 0
 	for i = #entries, 1, -1 do
@@ -3041,6 +3173,12 @@ function UI.buildDock(side)
 	inner:addChild({ pos = { 0, 0 }, size = { inner.size.w, UI.HEADER_H }, bgColor = C.darkest })
 	local n = #def.tabs
 	local tw = (inner.size.w - 4 - (ROW + GAP) * 2 - GAP * (n - 1)) / n
+	local tabFracs = {}
+	for _, t in ipairs(def.tabs) do
+		local _, tf = UI.buttonFit(tw, ROW, t[2], { scale = "body", icon = UI.TAB_ICONS[t[1]], noAutoIcon = true })
+		table.insert(tabFracs, tf)
+	end
+	local tabFit = UI.groupFrac(tabFracs)
 	local function fullRect()
 		-- Always the opened rect, so a tucked panel saves where it opens
 		local wasOpen = st.open
@@ -3063,7 +3201,7 @@ function UI.buildDock(side)
 			UI.linkPick = nil
 			UI.rebuildAfterToggle(side)
 		end, { color = isActive and C.bg or C.dark, scale = "body",
-			icon = UI.TAB_ICONS[id], iconFallback = true, noAutoIcon = true,
+			icon = UI.TAB_ICONS[id], iconFallback = true, noAutoIcon = true, fit = tabFit,
 			tip = isActive and "Click again to tuck this panel away" or t[2] })
 		-- Active tab: panel colour with an accent underline
 		if (isActive) then
@@ -3194,11 +3332,19 @@ function UI.buildToolbar()
 	UI.toolbar = bar
 	layoutGrip(bar, 3, 3, 16, h, "::", "toolbar", "move", function() return { bar.pos.x, bar.pos.y, contentW, bar.size.h } end,
 		"Drag to move the toolbar (Settings > Reset panel layout docks it again)")
-	if (not L) then label(bar, 3 + 16 + GAP * 2, 3, titleW, h, "Mod Studio", LEFTMID, "heading", UI.TITLE_FONT) end
+	if (not L) then label(bar, 3 + 16 + GAP * 2, 3, titleW, h, "Mod Studio", LEFTMID, "brand", UI.TITLE_FONT, 1) end
+	local barFracs = {}
+	for _, it in ipairs(items) do
+		if (it) then
+			local _, tf = UI.buttonFit(bw, h, it[1], { scale = "body", noAutoIcon = true })
+			table.insert(barFracs, tf)
+		end
+	end
+	local barFit = UI.groupFrac(barFracs)
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
-			button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = "body", noAutoIcon = true })
+			button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = "body", noAutoIcon = true, fit = barFit })
 			x = x + bw + GAP
 		else
 			x = x + 10

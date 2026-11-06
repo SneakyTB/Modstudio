@@ -314,8 +314,9 @@ function UI.tabHistory(pane)
 	local nu, nr = #MS.undoStack, #MS.redoStack
 	local buttonRow = function(items)
 		local bw = (w - GAP * (#items - 1)) / #items
+		local fit = UI.groupFrac(UI.rowFracs(bw, ROW, items))
 		for i, it in ipairs(items) do
-			UI.button(pane, PAD + (i - 1) * (bw + GAP), y, bw, ROW, it[1], it[2], { disabled = it.disabled, tip = it.tip })
+			UI.button(pane, PAD + (i - 1) * (bw + GAP), y, bw, ROW, it[1], it[2], { disabled = it.disabled, tip = it.tip, fit = fit })
 		end
 		y = y + ROW + GAP
 	end
@@ -470,8 +471,9 @@ function UI.tabTBM(pane)
 		{ "Save & load", MS.tbmApply, disabled = not T.lines, tip = "Save, then rebuild the mod maker from this file" }
 	}
 	local bw = (w - GAP * (#items - 1)) / #items
+	local fit = UI.groupFrac(UI.rowFracs(bw, ROW, items))
 	for i, it in ipairs(items) do
-		UI.button(pane, PAD + (i - 1) * (bw + GAP), y, bw, ROW, it[1], it[2], { disabled = it.disabled, tip = it.tip, scale = "body" })
+		UI.button(pane, PAD + (i - 1) * (bw + GAP), y, bw, ROW, it[1], it[2], { disabled = it.disabled, tip = it.tip, scale = "body", fit = fit })
 	end
 	y = y + ROW + GAP * 3
 
