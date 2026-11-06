@@ -292,6 +292,7 @@ function MS.undoTo(k)
 	for _ = n, k, -1 do table.remove(MS.undoStack) end
 	MS.restore(target)
 	MS.lastUndoKey = nil
+	MS.syncDirty()
 	MS.toast("Went back " .. (n - k + 1) .. " step" .. (n - k == 0 and "" or "s"))
 end
 
@@ -308,6 +309,7 @@ function MS.redoTo(m)
 	for _ = n, m, -1 do table.remove(MS.redoStack) end
 	MS.restore(target)
 	MS.lastUndoKey = nil
+	MS.syncDirty()
 	MS.toast("Redid " .. (n - m + 1) .. " step" .. (n - m == 0 and "" or "s"))
 end
 
@@ -329,7 +331,7 @@ function UI.tabHistory(pane)
 		{ "Redo", MS.redo, disabled = nr == 0, tip = "Ctrl+Y" },
 		{ "Clear history", function()
 			UI.confirm("Clear the undo history?", "Your mod stays as it is, but you won't be able to undo past this point.", {
-				{ "Clear", function() MS.undoStack, MS.redoStack = {}, {}; UI.requestRefresh() end }, { "Cancel" }
+				{ "Clear", function() MS.undoStack, MS.redoStack = {}, {}; if (MS.changed) then MS.cleanValid = false else MS.markClean() end; UI.requestRefresh() end }, { "Cancel" }
 			})
 		end, disabled = nu + nr == 0 }
 	})

@@ -4,6 +4,20 @@ A friendlier, more powerful mod maker for Toribash: a docked panel layout with i
 a 3D move/rotate/scale gizmo, triangles, parent/child hierarchy, undo/redo with a history
 list, multi-select, generators, 3D model assets, a built-in .tbm text editor and project files.
 
+**Version 1.0**
+
+## What's in 1.0
+
+- Models tab with a live 3D model preview and asset tools
+- Held-object dragging (pick up an object with the mouse, scroll to push it nearer or further)
+- Floor grid
+- Player placement, with "Face the other way"
+- F1-F4 tools (Select, Move, Rotate, Scale) and F9 Measure
+- In-game help window (H)
+- Built-in TBM text editor
+- Library prefabs
+- Undo/redo with history; the unsaved-changes warning clears when you undo back to the last export or load
+
 ## Install
 
 Copy `modstudio.lua` and the `modstudio/` folder into your Toribash `data/script/` folder,

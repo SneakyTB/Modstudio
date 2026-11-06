@@ -170,10 +170,12 @@ function MS.start()
 	MS.tris, MS.meta, MS.sel = {}, {}, {}
 	MS.nextTri = 1
 	MS.changed = false
+	MS.cleanDepth, MS.cleanValid = 0, true
 	MS.changedSinceAutosave = false
 	MS.lastAutosave = MS.clock()
 	MS.reloadAll()
 	MS.startCalibration()
+	MS.markClean()
 	MS.saveName = MS.saveName or "Untitled"
 	MS.addHooks()
 	MS.hideGameHud()
@@ -181,7 +183,7 @@ function MS.start()
 	if (MS.settings.firstRun) then
 		MS.UI.toggleHelp(true)
 	end
-	MS.toast("Mod Studio ready - press H any time for help")
+	MS.toast("Mod Studio " .. MS.VERSION .. " ready - press H any time for help")
 end
 
 ---Asks before closing if there's unsaved work

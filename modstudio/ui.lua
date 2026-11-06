@@ -1339,14 +1339,17 @@ local function objModelEntries()
 		elseif (info.textureMissing or (info.hasUV and not info.hasTexture)) then warn = "(!) This model has no texture next to it, so it will look plain." end
 		if (warn) then table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = warn }) end
 	else
-		table.insert(entries, { kind = "hint", rows = 2, scale = "small", label = "No 3D model. Open the Models tab and click one to add it, or choose one for this object." })
+		table.insert(entries, { kind = "hint", rows = 1, scale = "small", label = "No model. Pick one from the Models tab." })
 	end
 	table.insert(entries, { kind = "buttons", items = {
 		{ has and "Change model..." or "Choose model...", function() UI.selectTab("models") end,
 			tip = "Opens the Models tab. Click Use on selected there to give this object that model" },
-		{ "Remove model", function() MS.removeModelFrom(modelTargets()); UI.requestRefresh() end, disabled = not has,
-			tip = "Takes the model (and its fitted hitbox) off this object" }
 	} })
+	if (has) then
+		table.insert(entries[#entries].items, 
+		{ "Remove model", function() MS.removeModelFrom(modelTargets()); UI.requestRefresh() end, disabled = not has,
+			tip = "Takes the model (and its fitted hitbox) off this object" })
+	end
 	if (has) then
 		table.insert(entries, { kind = "num", label = "Size", step = 0.1, min = 0.01,
 			tip = "Scales the model evenly around its centre. 1 = the size the model was made at",
@@ -3596,7 +3599,7 @@ function UI.toggleHelp(force)
 	})
 	UI.help = box
 	local inner = box:addChild({ shift = { 2, 2 }, bgColor = white, uiColor = black }, true)
-	label(inner, 14, 8, W - 30, 30, MS.settings.firstRun and "Welcome to Mod Studio!" or "Mod Studio - shortcuts", LEFTMID, "title", UI.TITLE_FONT)
+	label(inner, 14, 8, W - 30, 30, MS.settings.firstRun and "Welcome to Mod Studio!" or ("Mod Studio " .. MS.VERSION .. " - shortcuts"), LEFTMID, "title", UI.TITLE_FONT)
 	local ys = { 0, 0 }
 	for i, row in ipairs(rows) do
 		local col = (cols == 2 and i >= split) and 1 or 0
@@ -3737,7 +3740,7 @@ function UI.enterTest()
 	end
 	local bar = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
-		pos = { floor(WIN_W / 2 - 150), 8 }, size = { 300, 34 },
+		pos = { 10, 70 }, size = { 300, 34 },
 		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(6), interactive = true
 	})
 	UI.testBar = bar

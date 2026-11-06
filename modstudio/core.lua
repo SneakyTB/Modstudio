@@ -1067,9 +1067,12 @@ function MS.pushUndo(label, key)
 	end
 	MS.lastUndoKey = key
 	MS.lastUndoTime = now
+	if (#MS.undoStack < (MS.cleanDepth or 0)) then MS.cleanValid = false end
 	table.insert(MS.undoStack, { label = label or "Edit", snap = MS.snapshot() })
 	if (#MS.undoStack > MS.MAX_UNDO) then
 		table.remove(MS.undoStack, 1)
+		MS.cleanDepth = (MS.cleanDepth or 0) - 1
+		if (MS.cleanDepth < 0) then MS.cleanValid = false end
 	end
 	MS.redoStack = {}
 end
@@ -1278,6 +1281,23 @@ function MS.tickRepair()
 	pcall(MS.repairEngine)
 end
 
+---Marks the current state as the saved one (after export, load, open)
+function MS.markClean()
+	MS.changed = false
+	MS.cleanDepth = #MS.undoStack
+	MS.cleanValid = true
+	MS.lastUndoKey = nil
+end
+
+---After undo/redo: the mod counts as unchanged again when we are back at the saved state
+function MS.syncDirty()
+	if (MS.cleanValid and #MS.undoStack == MS.cleanDepth) then
+		MS.changed = false
+	else
+		MS.changed = true
+	end
+end
+
 function MS.undo()
 	local e = table.remove(MS.undoStack)
 	if (not e) then
@@ -1287,6 +1307,7 @@ function MS.undo()
 	table.insert(MS.redoStack, { label = e.label, snap = MS.snapshot() })
 	MS.restore(e.snap)
 	MS.lastUndoKey = nil
+	MS.syncDirty()
 	MS.toast("Undo: " .. e.label)
 end
 
@@ -1299,6 +1320,7 @@ function MS.redo()
 	table.insert(MS.undoStack, { label = e.label, snap = MS.snapshot() })
 	MS.restore(e.snap)
 	MS.lastUndoKey = nil
+	MS.syncDirty()
 	MS.toast("Redo: " .. e.label)
 end
 
@@ -2783,7 +2805,7 @@ function MS.saveProject(name, silent)
 	if (MS.writeFile(path, "return " .. MS.serialize(s))) then
 		MS.changedSinceAutosave = false
 		if (not silent) then
-			MS.changed = false
+			MS.markClean()
 			MS.toast("Saved project \"" .. name .. "\"")
 		end
 		return true
@@ -2809,7 +2831,7 @@ function MS.loadProject(name)
 	end
 	MS.saveName = name ~= "_autosave" and name or MS.saveName
 	MS.markDirty()
-	MS.changed = false
+	MS.markClean()
 	MS.toast("Loaded project \"" .. name .. "\"")
 	return true
 end
@@ -2858,7 +2880,7 @@ function MS.exportMod(name)
 	local ok, written = pcall(export_mod_maker, name)
 	if (ok and written) then
 		MS.saveName = (tostring(written):gsub("^modmaker/", ""):gsub("%.tbm$", ""))
-		MS.changed = false
+		MS.markClean()
 		-- Keep a project file next to the export so names/triangles survive
 		MS.saveProject(MS.saveName, true)
 		MS.lastExport = tostring(written)
@@ -2884,7 +2906,7 @@ function MS.importMod(name)
 		end
 		MS.saveName = (name:gsub("^modmaker/", ""):gsub("%.tbm$", ""))
 		MS.markDirty()
-		MS.changed = false
+		MS.markClean()
 		MS.toast("Imported " .. name)
 		return true
 	end
