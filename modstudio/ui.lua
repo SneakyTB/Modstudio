@@ -164,31 +164,55 @@ UI.TITLE_FONT = (FONTS and FONTS.BIG) or 0
 UI.TEXT = { small = 0.42, body = 0.5, heading = 0.55, title = 0.7 }
 UI.TEXT_MIN = 0.85 -- text may shrink to this fraction of its role size before wrapping/truncating
 
+---BadaBoom is far larger per unit scale than font 4, so it has its own (smaller) role sizes
+---(these match the pre-unification header looks: bars 0.5, pane headings/dock title 0.5, dialog titles 0.65).
+UI.TITLE_TEXT = { small = 0.42, body = 0.42, heading = 0.5, title = 0.65 }
+UI.TITLE_MIN = 0.65 -- headings in the big font may shrink to this fraction before truncating
+UI.WORD_MIN = 0.7 -- single words (tabs, short buttons) may shrink to this fraction before truncating
+
 ---Role name (or a legacy number, snapped to the nearest role) -> role size, unscaled
-function UI.textSize(role)
-	if (type(role) == "string") then return UI.TEXT[role] or UI.TEXT.body end
-	if (type(role) ~= "number") then return UI.TEXT.body end
-	local best, bd = UI.TEXT.body, 99
-	for _, v in pairs(UI.TEXT) do
+function UI.textSize(role, font)
+	local tbl = (font ~= nil and font == UI.TITLE_FONT and font ~= 4) and UI.TITLE_TEXT or UI.TEXT
+	if (type(role) == "string") then return tbl[role] or tbl.body end
+	if (type(role) ~= "number") then return tbl.body end
+	local best, bd = tbl.body, 99
+	for _, v in pairs(tbl) do
 		local d = math.abs(v - role)
 		if (d < bd) then best, bd = v, d end
 	end
 	return best
 end
 
----Draw text in `el` at a role size. Shrinks at most to UI.TEXT_MIN of the role size; if it still
----does not fit, it wraps (when the box has room) or is cut with "..." at that size.
+---Draw text in `el` at a role size, shrinking to fit. Floors: 85% of the role size (body text), 70% for
+---single words, 65% for big-font headings. Never breaks inside a word; wraps only strings with spaces in
+---boxes tall enough for two lines. Anything still too long is cut with "..." on a single line.
 function UI.addText(el, override, str, x, y, font, align, role)
-	local top = UI.textSize(role) * UI.textK
-	local low = top * UI.TEXT_MIN
-	local sc = top
+	local top = UI.textSize(role, font) * UI.textK
 	str = tostring(str or "")
+	local isTitle = font ~= nil and font == UI.TITLE_FONT and font ~= 4
+	local hasSpace = str:find("%s") ~= nil
+	local frac = isTitle and UI.TITLE_MIN or (hasSpace and UI.TEXT_MIN or UI.WORD_MIN)
+	local low = top * frac
+	local sc = top
+	local function fits(t, s)
+		local ok, f = pcall(el.uiText, el, t, x, y, font, nil, s, nil, nil, nil, nil, nil, true)
+		return ok and f
+	end
 	while (sc > low) do
-		local ok, fits = pcall(el.uiText, el, str, x, y, font, nil, sc, nil, nil, nil, nil, nil, true)
-		if (ok and fits) then break end
+		if (fits(str, sc)) then break end
 		sc = sc - 0.02
 	end
 	if (sc < low) then sc = low end
+	local tall = override or (el.size and el.size.h and el.size.h >= ROW * 1.6)
+	if (not (hasSpace and tall) and not fits(str, sc)) then
+		-- single line: trim characters until it fits, then add "..."
+		local t = str
+		while (#t > 1) do
+			t = t:sub(1, #t - 1)
+			if (fits(t .. "...", sc)) then break end
+		end
+		str = t .. "..."
+	end
 	el:addAdaptedText(override, str, x, y, font, align, sc, sc)
 end
 
@@ -3142,7 +3166,7 @@ function UI.buildToolbar()
 	for _, it in ipairs(items) do if (it) then n = n + 1 else seps = seps + 1 end end
 	local h = ROW + 4
 	local L = MS.settings.layout and MS.settings.layout.toolbar
-	local titleW = L and 0 or floor(96 * UI.k)
+	local titleW = L and 0 or floor(120 * UI.k)
 	local bw = math.min(floor(62 * UI.k), floor((WIN_W - 60 - titleW - seps * 10) / n))
 	local contentW = n * (bw + GAP) + seps * 10 + 6 + 16 + GAP
 	-- Docked: a full-width top bar. Moved by the user: a compact floating bar.
@@ -3157,7 +3181,7 @@ function UI.buildToolbar()
 	UI.toolbar = bar
 	layoutGrip(bar, 3, 3, 16, h, "::", "toolbar", "move", function() return { bar.pos.x, bar.pos.y, contentW, bar.size.h } end,
 		"Drag to move the toolbar (Settings > Reset panel layout docks it again)")
-	if (not L) then label(bar, 3 + 16 + GAP * 2, 3, titleW, h, "MOD STUDIO", LEFTMID, "heading", UI.TITLE_FONT) end
+	if (not L) then label(bar, 3 + 16 + GAP * 2, 3, titleW, h, "Mod Studio", LEFTMID, "heading", UI.TITLE_FONT) end
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
