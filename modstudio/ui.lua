@@ -208,7 +208,7 @@ end
 function UI.groupFrac(fracs, floor)
 	local m = 1
 	for _, f in ipairs(fracs) do if (f < m) then m = f end end
-	return math.max(floor or UI.ICON_MIN or 0.6, m)
+	return math.max(floor or UI.ICON_MIN or 0.55, m)
 end
 
 ---Draw text in `el`. One-line text shrinks to fit its width (down to UI.FIT_MIN of the role size),
@@ -232,7 +232,8 @@ function UI.addText(el, override, str, x, y, font, align, role, frac)
 		if (avail <= 0) then return true end
 		local tw = UI.textWidth(t, font)
 		if (not tw) then return true end
-		return tw * s <= avail
+		-- Small tolerance: a group scale computed as exactly avail / width must count as fitting
+		return tw * s <= avail + 0.5
 	end
 	local wraps = hasSpace and tallBox and not isTitle
 	if (not wraps) then
@@ -316,6 +317,7 @@ UI.LABEL_ICONS = {
 	["Mirror to other side"] = "mirror", ["Mirror copy X"] = "mirror", ["Mirror copy Y"] = "mirror", ["Flip in place"] = "mirror",
 	["Export .tbm"] = "export", ["Import a mod..."] = "import", ["Save project"] = "save", ["Open project..."] = "folder",
 	["Restart match to try"] = "play", ["Look at players"] = "focus", ["Face the other way"] = "rotate",
+	["Box"] = "box", ["Sphere"] = "sphere", ["Cylinder"] = "cylinder",
 	["Floor"] = "slab", ["Wall"] = "wall", ["Pillar"] = "pillar", ["Platform"] = "platform",
 	["Arch"] = "arch", ["Quarter pipe"] = "qpipe", ["Tunnel"] = "tunnel", ["Curved wall"] = "curvedwall", ["Spiral stairs"] = "spiral",
 	["Align X"] = "align", ["Align Y"] = "align", ["Align Z"] = "align", ["Spread X"] = "spread", ["Spread Y"] = "spread", ["Spread Z"] = "spread",
@@ -323,7 +325,7 @@ UI.LABEL_ICONS = {
 }
 
 ---Smallest label size (fraction of the role size) a button keeps beside its icon
-UI.ICON_MIN = 0.6
+UI.ICON_MIN = 0.55
 
 ---How a button of this size shows itself: icon, fraction of the role size for its label, and whether
 ---the label is shown at all. In order of preference:
