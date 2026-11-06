@@ -5,7 +5,7 @@
 MS = MS or {}
 local MS = MS
 
-MS.VERSION = "1.0"
+MS.VERSION = "1.0.1"
 MS.HOOK = "modstudio"
 
 local clock = os.clock_real or os.clock

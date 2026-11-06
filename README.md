@@ -4,7 +4,9 @@ A friendlier, more powerful mod maker for Toribash: a docked panel layout with i
 a 3D move/rotate/scale gizmo, triangles, parent/child hierarchy, undo/redo with a history
 list, multi-select, generators, 3D model assets, a built-in .tbm text editor and project files.
 
-**Version 1.0**
+**Version 1.0.1**
+
+1.0.1: closing no longer warns after a test round-trip with no edits; the test bar sits lower so it no longer covers the Uke label.
 
 ## What's in 1.0
 

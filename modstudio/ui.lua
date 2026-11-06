@@ -3740,7 +3740,7 @@ function UI.enterTest()
 	end
 	local bar = UIElement:new({
 		globalid = TB_MENU_HUB_GLOBALID,
-		pos = { 10, 70 }, size = { 300, 34 },
+		pos = { 10, math.floor(WIN_H * 0.105) }, size = { 300, 34 },
 		bgColor = C.darkest, shapeType = ROUNDED, rounded = UI.r(6), interactive = true
 	})
 	UI.testBar = bar
@@ -3752,12 +3752,14 @@ function UI.exitTest()
 	pcall(exit_mod_maker_test_mode)
 	MS.testMode = false
 	MS.hideGameHud()
+	local wasChanged, wasAuto = MS.changed, MS.changedSinceAutosave
 	if (UI.testBar) then UI.testBar:kill() end
 	UI.testBar = nil
 	for _, el in ipairs(UI.roots()) do
 		if (el and not el.destroyed and el ~= UI.testBar) then el:show() end
 	end
-	MS.markDirty()
+	MS.markDirty() -- rebuild the world, but leaving test mode is not an edit
+	MS.changed, MS.changedSinceAutosave = wasChanged, wasAuto
 	UI.requestRefresh()
 end
 
