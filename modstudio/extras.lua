@@ -328,16 +328,16 @@ function UI.tabHistory(pane)
 			})
 		end, disabled = nu + nr == 0 }
 	})
-	UI.hint(pane, PAD, y, w, ROW, "Click a step to jump straight to it. Greyed steps can be redone.", 0.42)
+	UI.hint(pane, PAD, y, w, ROW, "Click a step to jump straight to it. Greyed steps can be redone.", "small")
 	y = y + ROW + GAP * 2
 	if (nu + nr == 0) then
-		UI.hint(pane, PAD, y, w, 60, "Nothing to undo yet.\nEvery change you make shows up here.", 0.5)
+		UI.hint(pane, PAD, y, w, 60, "Nothing to undo yet.\nEvery change you make shows up here.", "body")
 		return
 	end
 	local entries = {}
 	local function row(text, fn, o)
 		table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
-			UI.button(holder, 0, ry, rw, ROW, text, fn, { align = LEFTMID, scale = 0.45, active = o.active, color = o.dim and UI.C.darkest or nil, tip = o.tip })
+			UI.button(holder, 0, ry, rw, ROW, text, fn, { align = LEFTMID, scale = "body", active = o.active, color = o.dim and UI.C.darkest or nil, tip = o.tip })
 		end })
 	end
 	-- Oldest first: "Start", then each step; the current state is highlighted
@@ -453,7 +453,7 @@ function UI.tabTBM(pane)
 	local y = PAD
 	T.name = T.name or ("modmaker/" .. (MS.saveName or "Untitled") .. ".tbm")
 
-	UI.label(pane, PAD, y, 40, ROW, "File", LEFTMID, 0.47)
+	UI.label(pane, PAD, y, 40, ROW, "File", LEFTMID, "body")
 	UI.field(pane, PAD + 40, y, w - 40, ROW, T.name, { align = LEFTMID, placeholder = "modmaker/name.tbm (inside data/mod)" }, function(s)
 		T.name = s
 	end)
@@ -471,12 +471,12 @@ function UI.tabTBM(pane)
 	}
 	local bw = (w - GAP * (#items - 1)) / #items
 	for i, it in ipairs(items) do
-		UI.button(pane, PAD + (i - 1) * (bw + GAP), y, bw, ROW, it[1], it[2], { disabled = it.disabled, tip = it.tip, scale = 0.45 })
+		UI.button(pane, PAD + (i - 1) * (bw + GAP), y, bw, ROW, it[1], it[2], { disabled = it.disabled, tip = it.tip, scale = "body" })
 	end
 	y = y + ROW + GAP * 3
 
 	if (not T.lines) then
-		UI.hint(pane, PAD, y, w, 90, "Edit your mod's .tbm file as text, line by line.\n\nPress \"From mod maker\" to export what you've built and open it,\nor type a file name above and press \"Open file\".", 0.48)
+		UI.hint(pane, PAD, y, w, 90, "Edit your mod's .tbm file as text, line by line.\n\nPress \"From mod maker\" to export what you've built and open it,\nor type a file name above and press \"Open file\".", "body")
 		return
 	end
 
@@ -487,7 +487,7 @@ function UI.tabTBM(pane)
 			T.filter = sec[1]
 			UI.pages.tbm = 1
 			UI.requestRefresh()
-		end, { active = T.filter == sec[1], scale = 0.4, tip = sec[1] ~= "" and ("Lines containing \"" .. sec[1] .. "\"") or "Every line" })
+		end, { active = T.filter == sec[1], scale = "small", tip = sec[1] ~= "" and ("Lines containing \"" .. sec[1] .. "\"") or "Every line" })
 	end
 	local fx = PAD + w * 0.62 + GAP
 	UI.field(pane, fx, y, PAD + w - fx, ROW, T.filter, { align = LEFTMID, placeholder = "Find text, then Enter", enter = function() UI.blurFields() end }, function(s)
@@ -506,7 +506,7 @@ function UI.tabTBM(pane)
 			table.insert(entries, { kind = "custom", render = function(holder, ry, rw)
 				local isHeader = line:match("^%s*[%a_]+%s+%d+") and not line:match("^%s*#")
 				local numEl = holder:addChild({ pos = { 0, ry }, size = { 34, ROW }, bgColor = isHeader and UI.C.light or UI.C.darkest, shapeType = ROUNDED, rounded = UI.r(3) })
-				numEl:addAdaptedText(false, tostring(li), nil, nil, 4, CENTERMID, 0.38)
+				UI.addText(numEl, false, tostring(li), nil, nil, 4, CENTERMID, "small")
 				UI.field(holder, 36, ry, rw - 36 - (ROW + GAP) * 2, ROW, T.lines[li], { align = LEFTMID }, function(s)
 					T.lines[li] = s
 					T.dirty = true
@@ -526,10 +526,10 @@ function UI.tabTBM(pane)
 		end
 	end
 	local status = #T.lines .. " lines" .. (f ~= "" and (" | " .. shown .. " match") or "") .. (T.dirty and " | unsaved changes" or " | saved")
-	UI.hint(pane, PAD, y, w, ROW - 4, status, 0.4)
+	UI.hint(pane, PAD, y, w, ROW - 4, status, "small")
 	y = y + ROW - 4 + GAP
 	if (#entries == 0) then
-		UI.hint(pane, PAD, y, w, 50, "No lines contain \"" .. T.filter .. "\".", 0.5)
+		UI.hint(pane, PAD, y, w, 50, "No lines contain \"" .. T.filter .. "\".", "body")
 		return
 	end
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "tbm")
