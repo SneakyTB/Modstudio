@@ -194,9 +194,20 @@ function UI.addText(el, override, str, x, y, font, align, role)
 	local frac = isTitle and UI.TITLE_MIN or (hasSpace and UI.TEXT_MIN or UI.WORD_MIN)
 	local low = top * frac
 	local sc = top
+	local tallBox = override or (el.size and el.size.h and el.size.h >= ROW * 1.6)
+	-- One-line text is checked by width only: uiText's own check also fails when a line is taller
+	-- than the box, which is always true for the big heading font and cut headings to one letter.
+	local xoff = (type(x) == "table") and ((tonumber(x[1]) or 0) + (tonumber(x[2]) or 0)) or ((tonumber(x) or 0) * 2)
+	local avail = ((el.size and el.size.w) or 0) - xoff - 2
 	local function fits(t, s)
-		local ok, f = pcall(el.uiText, el, t, x, y, font, nil, s, nil, nil, nil, nil, nil, true)
-		return ok and f
+		if (hasSpace and tallBox and not isTitle) then
+			local ok, f = pcall(el.uiText, el, t, x, y, font, nil, s, nil, nil, nil, nil, nil, true)
+			return ok and f
+		end
+		if (avail <= 0) then return true end
+		local ok, w = pcall(get_string_length, t, font or 4)
+		if (not ok or not w) then return true end
+		return w * s <= avail
 	end
 	while (sc > low) do
 		if (fits(str, sc)) then break end
