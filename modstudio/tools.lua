@@ -101,114 +101,6 @@ function MS.raycastScene(ro, rd, exclude)
 end
 
 ---------------------------------------------------------------------------
--- Surface snapping: the dragged selection rests on whatever is under the
--- cursor and lines its edges up with that object's edges.
----------------------------------------------------------------------------
-
----Surface snapping applies when dragging an object directly (not the gizmo handles).
----The setting turns it on, holding Shift while dragging flips it.
-function MS.surfaceSnapActive()
-	return (MS.settings.surfaceSnap and true or false) ~= MS.shiftDown()
-end
-
----Lowest point of a shape along direction n, relative to `origin`
-local function minAlong(pos, R, shape, dims, n, origin)
-	local c = V.dot(V.sub(pos, origin), n)
-	if (shape == 0) then return c - dims[1] end
-	local e = MS.shapeExtents(shape, dims[1], dims[2], dims[3])
-	local s = abs(V.dot(n, M.col(R, 1))) * e[1] / 2 + abs(V.dot(n, M.col(R, 2))) * e[2] / 2 + abs(V.dot(n, M.col(R, 3))) * e[3] / 2
-	return c - s
-end
-
-local function extentAlong(pos, R, shape, dims, u)
-	local c = V.dot(pos, u)
-	local s
-	if (shape == 0) then
-		s = dims[1]
-	else
-		local e = MS.shapeExtents(shape, dims[1], dims[2], dims[3])
-		s = abs(V.dot(u, M.col(R, 1))) * e[1] / 2 + abs(V.dot(u, M.col(R, 2))) * e[2] / 2 + abs(V.dot(u, M.col(R, 3))) * e[3] / 2
-	end
-	return c - s, c + s
-end
-
----Works out where the selection (drag.items, at drag start) should go so it sits
----on the surface under the ray. Returns move delta + readout, or nil.
-function MS.surfaceSnapDelta(drag, ro, rd)
-	local items = drag.items
-	if (not items or not items.objs) then return nil end
-	local exclude = {}
-	for _, it in ipairs(items.objs) do exclude[it.idx] = true end
-	for _, it in ipairs(items.tris or {}) do
-		for _, idx in ipairs(MS.tris[it.id] and MS.tris[it.id].objs or {}) do exclude[idx] = true end
-	end
-	local hit = MS.raycastScene(ro, rd, exclude)
-	if (not hit or hit.t > 250) then return nil end
-	local n = hit.normal
-	local pivot0 = drag.pivot0
-
-	-- How far the selection reaches "below" its pivot along the surface normal
-	local lowest = math.huge
-	for _, it in ipairs(items.objs) do
-		lowest = math.min(lowest, minAlong(it.pos, it.R, it.type, it.dims, n, pivot0))
-	end
-	for _, it in ipairs(items.tris or {}) do
-		for _, key in ipairs({ "a", "b", "c" }) do
-			lowest = math.min(lowest, V.dot(V.sub(it[key], pivot0), n) - (it.thick or 0.2) / 2)
-		end
-	end
-	if (lowest == math.huge) then return nil end
-	-- Pivot goes under the cursor on the surface, lifted so the lowest point touches it
-	local newPivot = V.sub(hit.pos, V.mul(n, lowest))
-	local d = V.sub(newPivot, pivot0)
-
-	-- Edge alignment against the object we landed on
-	local aligned = false
-	local target = hit.idx and MS.objs[hit.idx]
-	if (target) then
-		local tR = MS.objRot(hit.idx)
-		local tPos = MS.objPos(hit.idx)
-		local tDims = { target.dims_x or 1, target.dims_y or 1, target.dims_z or 1 }
-		local thr = math.max(0.08, (MS.settings.gridStep or 0.25) * 0.6)
-		for k = 1, 3 do
-			local u = M.col(tR, k)
-			if (abs(V.dot(u, n)) < 0.3) then
-				local tmin, tmax = extentAlong(tPos, tR, target.type, tDims, u)
-				local smin, smax = math.huge, -math.huge
-				for _, it in ipairs(items.objs) do
-					local a, b = extentAlong(V.add(it.pos, d), it.R, it.type, it.dims, u)
-					smin, smax = math.min(smin, a), math.max(smax, b)
-				end
-				if (smin < math.huge) then
-					local cands = {
-						tmin - smin, tmax - smax, (tmin + tmax) / 2 - (smin + smax) / 2,
-						tmax - smin, tmin - smax
-					}
-					local bestShift
-					for _, sh in ipairs(cands) do
-						if (abs(sh) < thr and (not bestShift or abs(sh) < abs(bestShift))) then bestShift = sh end
-					end
-					if (bestShift) then
-						d = V.add(d, V.mul(u, bestShift))
-						aligned = true
-					end
-				end
-			end
-		end
-	end
-	-- On flat ground (or a flat top) grid snapping still applies sideways
-	if (not aligned and drag.snap and MS.settings.gridStep > 0 and abs(n[3]) > 0.999) then
-		local step = MS.settings.gridStep
-		local target2 = V.add(pivot0, d)
-		target2[1] = MS.round(target2[1], step)
-		target2[2] = MS.round(target2[2], step)
-		d = V.sub(target2, pivot0)
-	end
-	local where = hit.idx and MS.objName(hit.idx) or "the floor"
-	return d, "On " .. where .. (aligned and "  [edges lined up]" or "")
-end
-
----------------------------------------------------------------------------
 -- Measuring
 ---------------------------------------------------------------------------
 
@@ -223,7 +115,7 @@ function MS.surfacePoint(x, y)
 end
 
 function MS.measureClick(x, y)
-	local p, hit = MS.surfacePoint(x, y)
+	local p = MS.surfacePoint(x, y)
 	if (not p) then
 		MS.toast("Click on an object or the floor to measure")
 		return
@@ -245,7 +137,6 @@ end
 
 ---Distance between the two selected objects' centers, or nil
 function MS.selectionDistance()
-	local list = MS.selList()
 	local tris, plain = MS.selSplit()
 	if (#plain == 2 and next(tris) == nil) then
 		return V.dist(MS.objPos(plain[1]), MS.objPos(plain[2]))
@@ -739,8 +630,6 @@ end
 ---------------------------------------------------------------------------
 -- Mod templates: start a new mod with objects AND rules set up
 ---------------------------------------------------------------------------
-
-local function at(c, dx, dy) return { c[1] + dx, c[2] + dy, 0 } end
 
 local function floorTile(c, sx, sy, color, name, z)
 	return MS.createObj({ type = 1, pos_x = c[1], pos_y = c[2], pos_z = (z or 0) + 0.05, dims_x = sx, dims_y = sy, dims_z = 0.1,

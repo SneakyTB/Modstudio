@@ -209,15 +209,6 @@ function MS.descendants(key, H, out)
 	return out
 end
 
-function MS.depthOf(key, H)
-	local d, p = 0, H.parent[key]
-	while (p) do
-		d = d + 1
-		p = H.parent[p]
-	end
-	return d
-end
-
 ---True if `a` sits somewhere below `b`
 function MS.isBelow(a, b, H)
 	local p = H.parent[a]
@@ -311,19 +302,6 @@ function MS.selSplitFamily()
 	local set = MS.selKeys()
 	if (next(set) == nil) then return {}, {} end
 	return MS.splitKeys(MS.withDescendants(set, MS.hier()))
-end
-
----Engine indices of everything selected + descendants (for highlighting)
-function MS.followerObjs()
-	if (not MS.childrenFollow()) then return {} end
-	local set = MS.selKeys()
-	if (next(set) == nil) then return {} end
-	local H = MS.hier()
-	local out = {}
-	for key in pairs(MS.withDescendants(set, H)) do
-		if (not set[key]) then table.insert(out, key) end
-	end
-	return sortKeys(out)
 end
 
 local function selectKeys(keys, primaryKey)

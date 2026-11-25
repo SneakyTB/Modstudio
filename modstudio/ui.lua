@@ -3,7 +3,7 @@
 -- Built on the game's own toriui so it looks and behaves like the stock menus.
 
 local MS = MS
-local V, M = MS.V, MS.M
+local V = MS.V
 local floor = math.floor
 
 MS.UI = MS.UI or {}
@@ -907,21 +907,6 @@ function UI.resetLayout()
 	MS.toast("Panels are back in their default places")
 end
 
----Sub tab strip; returns the next free y
-local function subTabs(parent, y, key, items)
-	local w = parent.size.w - PAD * 2
-	local list = {}
-	for _, it in ipairs(items) do
-		table.insert(list, { it[2], function()
-			UI.sub[key] = it[1]
-			UI.pages[key .. ":" .. it[1]] = 1
-			UI.requestRefresh()
-		end, active = UI.sub[key] == it[1], tip = it[3] })
-	end
-	buttonRow(parent, PAD, y, w, ROW, list)
-	return y + ROW + GAP * 3
-end
-
 ---------------------------------------------------------------------------
 -- Entry builders for objects
 ---------------------------------------------------------------------------
@@ -1346,7 +1331,7 @@ local function objModelEntries()
 			tip = "Opens the Models tab. Click Use on selected there to give this object that model" },
 	} })
 	if (has) then
-		table.insert(entries[#entries].items, 
+		table.insert(entries[#entries].items,
 		{ "Remove model", function() MS.removeModelFrom(modelTargets()); UI.requestRefresh() end, disabled = not has,
 			tip = "Takes the model (and its fitted hitbox) off this object" })
 	end
@@ -3056,8 +3041,6 @@ function UI.selectTab(id)
 end
 
 local function dockRect(side)
-	local sideW = MS.clamp(floor(WIN_W * 0.2), floor(250 * UI.k), floor(360 * UI.k))
-	local top = UI.topBarH()
 	local bottom = WIN_H - UI.statusH()
 	local open = UI.dockState[side].open
 	-- Moved / resized by the user (kept on screen if the window got smaller)

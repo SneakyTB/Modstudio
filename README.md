@@ -4,7 +4,9 @@ A friendlier, more powerful mod maker for Toribash: a docked panel layout with i
 a 3D move/rotate/scale gizmo, triangles, parent/child hierarchy, undo/redo with a history
 list, multi-select, generators, 3D model assets, a built-in .tbm text editor and project files.
 
-**Version 1.1.0**
+**Version 1.1.1**
+
+1.1.1: code tidy-up. Removes the old surface-snapping code (object drags have held the object at a fixed camera distance for a while), a few functions nothing called and unused variables. No change to how Mod Studio works.
 
 1.1.0: extra joints. For Toribash alpha 2 mods that add extra body parts and joints, the Bodies and Joints tabs list every part (extra ones use the mod's own names), you can pick them in 3D, and the Joints tab shows which two body parts a joint connects. Adding and re-wiring joints isn't in yet. Works as before on older game versions.
 

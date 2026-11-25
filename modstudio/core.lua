@@ -5,7 +5,7 @@
 MS = MS or {}
 local MS = MS
 
-MS.VERSION = "1.1.0"
+MS.VERSION = "1.1.1"
 MS.HOOK = "modstudio"
 
 local clock = os.clock_real or os.clock
@@ -149,7 +149,6 @@ MS.DEFAULT_SETTINGS = {
 	camMethodOk = true,     -- true once camMethod is known to move the camera (hook confirmed in game)
 	camFix = 0,             -- settings migration marker for the camera method
 	objLimit = 0,           -- max env objects the game allows (0 = not measured yet)
-	surfaceSnap = true,     -- unused: object drags now hold the object at a fixed camera distance
 	showDojo = true,        -- draw the dojo outline on the floor
 	modelPreview = true,    -- draw each object's 3D model (use_model) in the editor
 	modelDepth = 2,         -- folders between data/mod_assets and the exported mod: 2 = modmaker/<name>, 1 = data/mod/<name>
@@ -1890,24 +1889,6 @@ end
 -- Tools: align / distribute / mirror / drop / snap / arrays / generators
 ---------------------------------------------------------------------------
 
----Applies a rigid transform (pivot, rotation Q, translation d) to the selection
-function MS.transformSelection(pivot, Q, d)
-	local tris, plain = (MS.selSplitFamily or MS.selSplit)()
-	for _, idx in ipairs(plain) do
-		local p = MS.objPos(idx)
-		local np = V.add(V.add(pivot, M.apply(Q, V.sub(p, pivot))), d)
-		MS.setObjPos(idx, np)
-		MS.setObjRot(idx, M.mul(Q, MS.objRot(idx)))
-	end
-	for id in pairs(tris) do
-		local t = MS.tris[id]
-		for _, key in ipairs({ "a", "b", "c" }) do
-			t[key] = V.add(V.add(pivot, M.apply(Q, V.sub(t[key], pivot))), d)
-		end
-		MS.triBuild(id)
-	end
-end
-
 ---Moves the selection without touching rotations
 function MS.translateSelection(d)
 	local tris, plain = (MS.selSplitFamily or MS.selSplit)()
@@ -2661,7 +2642,6 @@ end
 ---Starts turning player p around (press again to turn back)
 function MS.faceToggle(p)
 	local n = math.max(2, MS.numPlayers or 2)
-	local V = MS.V
 	local f = { p = p, n = n, c0 = {}, yaw0 = {}, tries = 0 }
 	for i = 0, n - 1 do
 		f.c0[i] = MS.playerWorldCenter(i)

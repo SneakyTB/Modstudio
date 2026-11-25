@@ -16,7 +16,7 @@
 
 local MS = MS
 local V, M = MS.V, MS.M
-local floor, abs, max, min = math.floor, math.abs, math.max, math.min
+local abs, max, min = math.abs, math.max, math.min
 local clock = MS.clock
 
 MS.ASSET_ROOT = "data/mod_assets"
@@ -142,9 +142,6 @@ end
 -- Finding .obj files under data/mod_assets
 ---------------------------------------------------------------------------
 
-MS.modelList = MS.modelList or nil
-MS.modelListTime = MS.modelListTime or 0
-
 local function isFolder(path)
 	if (is_folder) then
 		local ok, r = pcall(is_folder, path)
@@ -186,13 +183,6 @@ local function listObjFiles()
 	end
 	walk(ROOT, "", 0)
 	table.sort(out, function(a, b) return a:lower() < b:lower() end)
-	return out
-end
-
-function MS.scanModels(force)
-	if (MS.modelList and not force and clock() - MS.modelListTime < 60) then return MS.modelList end
-	local out = listObjFiles()
-	MS.modelList, MS.modelListTime = out, clock()
 	return out
 end
 
@@ -843,7 +833,6 @@ function MS.libPoll(force)
 	L.entries, L.byName = entries, byName
 	if (changed) then
 		L.rev = L.rev + 1
-		MS.modelList, MS.modelListTime = names, now
 	end
 	return changed
 end
@@ -1006,7 +995,6 @@ function MS.assetReport(force)
 	local function add(sev, text, objs) table.insert(rep.issues, { severity = sev, text = text, objs = objs or {} }) end
 	for _, name in ipairs(order) do
 		local objs = users[name]
-		local n = #objs
 		if (name == "") then
 			add("warn", "with \"Use a 3D model\" on but no model chosen (the game would look for a file called env_obj)", objs)
 		else

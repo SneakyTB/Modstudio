@@ -997,7 +997,7 @@ end
 
 function MS.buildFrame()
 	local F = { centers = {}, outlines = {}, labels = {}, links = {}, verts = {}, triEdges = {}, hier = {} }
-	local camPos, _, fwd, right, up = camVectors()
+	local _, _, fwd, right = camVectors()
 	F.right, F.fwd = right, fwd
 
 	-- Object centers (box select + labels)
@@ -1347,7 +1347,6 @@ function MS.drawFloor3d()
 		local nLines = 2 * (2 * n + 1)
 		while (nLines * math.ceil(2 * reach / segLen) > 3000) do segLen = segLen * 1.5 end
 		local pieces = math.max(1, math.ceil(2 * reach / segLen))
-		local pl = 2 * reach / pieces
 		local function line(x1, y1, x2, y2, w)
 			for k = 0, pieces - 1 do
 				local ax, ay = x1 + (x2 - x1) * (k / pieces), y1 + (y2 - y1) * (k / pieces)

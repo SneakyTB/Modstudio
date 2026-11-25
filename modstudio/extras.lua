@@ -6,7 +6,6 @@
 
 local MS = MS
 local UI = MS.UI
-local floor = math.floor
 
 local ROW, GAP, PAD = 22, 2, 4
 
