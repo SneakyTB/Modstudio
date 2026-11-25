@@ -5,7 +5,7 @@
 MS = MS or {}
 local MS = MS
 
-MS.VERSION = "1.0.1"
+MS.VERSION = "1.1.0"
 MS.HOOK = "modstudio"
 
 local clock = os.clock_real or os.clock
@@ -406,6 +406,70 @@ MS.JOINT_NAMES = {
 }
 MS.NUM_JOINTS = 20
 
+---Extra joints (Toribash alpha 2): extra bodies are numbered from 21, extra joints from 20.
+---Everything below falls back to the classic 21 bodies / 20 joints on older game versions.
+MS.EXTRA_BODY_FIRST, MS.EXTRA_JOINT_FIRST = 21, 20
+
+local function countOf(fn, p, classic)
+	if (type(fn) ~= "function") then return classic end
+	local ok, n = pcall(fn, p)
+	if (ok and type(n) == "number" and n >= classic) then return math.floor(n) end
+	return classic
+end
+
+---How many bodies / joints player p has, extra limbs included
+function MS.numBodies(p) return countOf(get_num_bodies, p, MS.NUM_BODIES) end
+function MS.numJoints(p) return countOf(get_num_joints, p, MS.NUM_JOINTS) end
+
+MS.extraNames = MS.extraNames or { body = {}, joint = {} }
+
+local function extraName(kind, infoFn, p, i, label)
+	local key = p .. ":" .. i
+	local cached = MS.extraNames[kind][key]
+	if (cached) then return cached end
+	local name
+	if (type(infoFn) == "function") then
+		local ok, info = pcall(infoFn, p, i)
+		if (ok and type(info) == "table") then
+			local n = info.mod_name or info.name
+			if (type(n) == "string" and n ~= "") then name = n end
+		end
+	end
+	name = name or (label .. " " .. i)
+	MS.extraNames[kind][key] = name
+	return name
+end
+
+---Display name of a body part / joint; extra limbs use the name from the mod
+function MS.bodyName(p, b)
+	return MS.BODY_NAMES[b] or extraName("body", get_body_info, p, b, "Extra body")
+end
+function MS.jointName(p, j)
+	return MS.JOINT_NAMES[j] or extraName("joint", get_joint_info, p, j, "Extra joint")
+end
+
+---Names of every part of player p as a table indexed from 0 (for lists)
+function MS.bodyNameList(p)
+	local t = {}
+	for b = 0, MS.numBodies(p) - 1 do t[b] = MS.bodyName(p, b) end
+	return t
+end
+function MS.jointNameList(p)
+	local t = {}
+	for j = 0, MS.numJoints(p) - 1 do t[j] = MS.jointName(p, j) end
+	return t
+end
+
+---The two body parts a joint connects (indices), or nil on older versions
+function MS.jointBodies(p, j)
+	if (type(get_joint_bodies) ~= "function") then return nil end
+	local ok, a, b = pcall(get_joint_bodies, p, j)
+	if (not ok) then return nil end
+	if (type(a) == "table") then a, b = a[1] or a.body1 or a.b1, a[2] or a.body2 or a.b2 end
+	if (type(a) ~= "number" or type(b) ~= "number") then return nil end
+	return a, b
+end
+
 MS.BODY_MIRROR = { [5] = 8, [8] = 5, [6] = 9, [9] = 6, [7] = 10, [10] = 7, [11] = 12, [12] = 11,
 	[13] = 14, [14] = 13, [15] = 16, [16] = 15, [17] = 18, [18] = 17, [19] = 20, [20] = 19 }
 MS.JOINT_MIRROR = { [4] = 7, [7] = 4, [5] = 8, [8] = 5, [6] = 9, [9] = 6, [10] = 11, [11] = 10,
@@ -664,6 +728,8 @@ end
 
 function MS.readBody(p, b)
 	local o = {}
+	-- Extra limbs may not answer every field: that must never hide a field on the classic parts
+	local extra, failed = b >= MS.NUM_BODIES, false
 	for _, f in ipairs(MS.BODY_FIELDS) do
 		if (not MS.unsupported.body[f]) then
 			local ok, v = pcall(get_mod_body, p, b, f)
@@ -673,10 +739,11 @@ function MS.readBody(p, b)
 				if (tostring(v):find("player index")) then
 					return nil
 				end
-				MS.unsupported.body[f] = true
+				if (extra) then failed = true else MS.unsupported.body[f] = true end
 			end
 		end
 	end
+	if (extra and failed and next(o) == nil) then return nil end
 	MS.bodies[p] = MS.bodies[p] or {}
 	MS.bodies[p][b] = o
 	return o
@@ -684,6 +751,7 @@ end
 
 function MS.readJoint(p, j)
 	local o = {}
+	local extra, failed = j >= MS.NUM_JOINTS, false
 	for _, f in ipairs(MS.JOINT_FIELDS) do
 		if (not MS.unsupported.joint[f]) then
 			local ok, v = pcall(get_mod_joint, p, j, f)
@@ -693,10 +761,11 @@ function MS.readJoint(p, j)
 				if (tostring(v):find("player index")) then
 					return nil
 				end
-				MS.unsupported.joint[f] = true
+				if (extra) then failed = true else MS.unsupported.joint[f] = true end
 			end
 		end
 	end
+	if (extra and failed and next(o) == nil) then return nil end
 	MS.joints[p] = MS.joints[p] or {}
 	MS.joints[p][j] = o
 	return o
@@ -743,6 +812,7 @@ function MS.reloadAll()
 		end
 	end
 	MS.bodies, MS.joints = {}, {}
+	MS.extraNames = { body = {}, joint = {} }
 	MS.numPlayers = 0
 	local okr, rule = pcall(get_gamerule, "numplayers")
 	local maxPlayers = MS.clamp(okr and tonumber(rule) or 2, 2, 4)
@@ -750,8 +820,8 @@ function MS.reloadAll()
 		if (MS.readBody(p, 0) == nil) then
 			break
 		end
-		for b = 1, MS.NUM_BODIES - 1 do MS.readBody(p, b) end
-		for j = 0, MS.NUM_JOINTS - 1 do MS.readJoint(p, j) end
+		for b = 1, MS.numBodies(p) - 1 do MS.readBody(p, b) end
+		for j = 0, MS.numJoints(p) - 1 do MS.readJoint(p, j) end
 		MS.numPlayers = p + 1
 	end
 	if (MS.hierFix) then MS.hierFix() end
@@ -2320,7 +2390,7 @@ MS.CHEST_JOINT, MS.LUMBAR_JOINT = 1, 2
 function MS.scalePlayer(p, k)
 	if (not MS.bodies[p] or k <= 0) then return end
 	local minZ = math.huge
-	for b = 0, MS.NUM_BODIES - 1 do
+	for b = 0, MS.numBodies(p) - 1 do
 		local o = MS.bodies[p][b]
 		if (o) then minZ = math.min(minZ, o.pos_z - (o.sides_z or 0) / 2) end
 	end
@@ -2332,7 +2402,7 @@ function MS.scalePlayer(p, k)
 		set(p, id, "pos_y", q[2])
 		set(p, id, "pos_z", q[3])
 	end
-	for b = 0, MS.NUM_BODIES - 1 do
+	for b = 0, MS.numBodies(p) - 1 do
 		local o = MS.bodies[p][b]
 		if (o) then
 			sp(o, MS.bodySet, b)
@@ -2341,7 +2411,7 @@ function MS.scalePlayer(p, k)
 			end
 		end
 	end
-	for j = 0, MS.NUM_JOINTS - 1 do
+	for j = 0, MS.numJoints(p) - 1 do
 		local o = MS.joints[p] and MS.joints[p][j]
 		if (o) then
 			sp(o, MS.jointSet, j)

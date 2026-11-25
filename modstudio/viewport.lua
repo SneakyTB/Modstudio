@@ -280,7 +280,7 @@ function MS.pickBody(x, y)
 	if (not ro) then return nil end
 	local best, bp, bb = math.huge, nil, nil
 	for p = 0, math.max(1, MS.numPlayers) - 1 do
-		for b = 0, MS.NUM_BODIES - 1 do
+		for b = 0, MS.numBodies(p) - 1 do
 			local w = MS.bodyWorld(p, b)
 			local t = w and rayBody(ro, rd, w)
 			if (t and t < best) then best, bp, bb = t, p, b end
@@ -296,7 +296,7 @@ function MS.pickJoint(x, y)
 	if (not ro) then return nil end
 	local best, bp, bj = math.huge, nil, nil
 	for p = 0, math.max(1, MS.numPlayers) - 1 do
-		for j = 0, MS.NUM_JOINTS - 1 do
+		for j = 0, MS.numJoints(p) - 1 do
 			local w = MS.jointWorld(p, j)
 			local t = w and raySphere(ro, rd, w.pos, math.max(0.08, w.radius * 1.4))
 			if (t and t < best) then best, bp, bj = t, p, j end
@@ -361,21 +361,21 @@ local function captureItems(ctx)
 	if (ctx.kind == "player") then
 		local p = ctx.p
 		local it = { p = p, bodies = {}, joints = {}, center = MS.playerModCenter(p) or { 0, 0, 0 } }
-		for b = 0, MS.NUM_BODIES - 1 do
+		for b = 0, MS.numBodies(p) - 1 do
 			local o = MS.bodies[p][b]
 			if (o) then it.bodies[b] = { pos = { o.pos_x, o.pos_y, o.pos_z }, R = shapeMatrix(o) } end
 		end
-		for j = 0, MS.NUM_JOINTS - 1 do
+		for j = 0, MS.numJoints(p) - 1 do
 			local o = MS.joints[p] and MS.joints[p][j]
 			if (o) then it.joints[j] = { pos = { o.pos_x, o.pos_y, o.pos_z }, axis = { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 } } end
 		end
 		-- Where the game draws each part now: lets a move show up instantly (set_body_pos)
 		it.world, it.jworld = {}, {}
-		for b = 0, MS.NUM_BODIES - 1 do
+		for b = 0, MS.numBodies(p) - 1 do
 			local w = MS.bodyWorld(p, b)
 			if (w) then it.world[b] = w.pos end
 		end
-		for j = 0, MS.NUM_JOINTS - 1 do
+		for j = 0, MS.numJoints(p) - 1 do
 			local w = MS.jointWorld(p, j)
 			if (w) then it.jworld[j] = w.pos end
 		end

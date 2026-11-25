@@ -1,12 +1,12 @@
-"""Offline tests for the extra-joints read support in corev2.lua.
-Run: python3 -I tests/test_extra_joints_v2.py   (loads real source, stubs the game API)"""
+"""Offline tests for the extra-joints read support in core.lua.
+Run: python3 -I tests/test_extra_joints.py   (loads real source, stubs the game API)"""
 import sys, os, re
 from lupa import LuaRuntime
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-src = open(f"{root}/modstudio/corev2.lua").read()
-helpers = src[src.index("---Extra joints (Toribash alpha 2)"):src.index("MSV2.BODY_MIRROR = {")]
+src = open(f"{root}/modstudio/core.lua").read()
+helpers = src[src.index("---Extra joints (Toribash alpha 2)"):src.index("MS.BODY_MIRROR = {")]
 def func(name):
-    m = re.search(r"^function MSV2\.%s\(.*?^end\n" % name, src, re.S | re.M)
+    m = re.search(r"^function MS\.%s\(.*?^end\n" % name, src, re.S | re.M)
     assert m, name
     return m.group(0)
 lua = LuaRuntime(unpack_returned_tuples=True)
@@ -18,7 +18,7 @@ def check(name, cond):
 
 def fresh(extra_api=True):
     lua.execute("""
-    MSV2 = { NUM_BODIES = 21, NUM_JOINTS = 20, BODIES = nil,
+    MS = { NUM_BODIES = 21, NUM_JOINTS = 20, BODIES = nil,
       BODY_NAMES = {[0]="Head","Breast"}, JOINT_NAMES = {[0]="Neck","Chest"},
       BODY_FIELDS = {"pos_x","sides_x"}, JOINT_FIELDS = {"pos_x","radius"},
       unsupported = { body = {}, joint = {} }, bodies = {}, joints = {} }
@@ -30,7 +30,7 @@ def fresh(extra_api=True):
     lua.execute(func("readBody")); lua.execute(func("readJoint"))
 fresh()
 g = lua.globals()
-M = g.MSV2
+M = g.MS
 check("older game: classic counts", M.numBodies(0) == 21 and M.numJoints(0) == 20)
 lua.execute("get_num_bodies = function(p) return 24 end; get_num_joints = function(p) return 23 end")
 check("alpha 2: extra counts", M.numBodies(0) == 24 and M.numJoints(1) == 23)

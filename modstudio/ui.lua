@@ -2026,14 +2026,14 @@ function UI.selectBody(p, b)
 	MS.bodySel = { p = p, b = b }
 	UI.pages.players = 1
 	UI.requestRefresh()
-	MS.toast("Selected " .. (PLAYER_NAMES[p] or "") .. " " .. MS.BODY_NAMES[b])
+	MS.toast("Selected " .. (PLAYER_NAMES[p] or "") .. " " .. MS.bodyName(p, b))
 end
 
 function UI.selectJoint(p, j)
 	MS.jointSel = { p = p, j = j }
 	UI.pages.joints = 1
 	UI.requestRefresh()
-	MS.toast("Selected " .. (PLAYER_NAMES[p] or "") .. " " .. MS.JOINT_NAMES[j])
+	MS.toast("Selected " .. (PLAYER_NAMES[p] or "") .. " " .. MS.jointName(p, j))
 end
 
 function UI.tabPlayers(pane)
@@ -2046,7 +2046,7 @@ function UI.tabPlayers(pane)
 		return
 	end
 	local y = playerRow(pane, PAD, w, p, function(np) UI.selectBody(np, b) end)
-	y = partGrid(pane, y, w, MS.BODY_NAMES, MS.NUM_BODIES, b, function(nb) UI.selectBody(p, nb) end)
+	y = partGrid(pane, y, w, MS.bodyNameList(p), MS.numBodies(p), b, function(nb) UI.selectBody(p, nb) end)
 	local function g(f) return function() return MS.bodies[p][b][f] end end
 	local function s(f, lbl)
 		return function(v)
@@ -2169,7 +2169,7 @@ function UI.tabPlayers(pane)
 				{ "Physics to all parts", function()
 					MS.pushUndo("Physics to all parts")
 					local src = MS.bodies[p][b]
-					for nb = 0, MS.NUM_BODIES - 1 do
+					for nb = 0, MS.numBodies(p) - 1 do
 						for _, f in ipairs({ "density", "hardness", "friction", "bounce" }) do
 							if (src[f] ~= nil) then MS.bodySet(p, nb, f, src[f]) end
 						end
@@ -2238,7 +2238,13 @@ function UI.tabJoints(pane)
 		return
 	end
 	local y = playerRow(pane, PAD, w, p, function(np) UI.selectJoint(np, j) end)
-	y = partGrid(pane, y, w, MS.JOINT_NAMES, MS.NUM_JOINTS, j, function(nj) UI.selectJoint(p, nj) end)
+	y = partGrid(pane, y, w, MS.jointNameList(p), MS.numJoints(p), j, function(nj) UI.selectJoint(p, nj) end)
+	-- Which two body parts this joint connects (alpha 2 and newer)
+	local jb1, jb2 = MS.jointBodies(p, j)
+	if (jb1) then
+		hint(pane, PAD, y, w, ROW, "Connects " .. MS.bodyName(p, jb1) .. " and " .. MS.bodyName(p, jb2), "body")
+		y = y + ROW + GAP
+	end
 	local function g(f) return function() return MS.joints[p][j][f] end end
 	local function s(f, lbl)
 		return function(v)
@@ -2302,7 +2308,7 @@ function UI.tabJoints(pane)
 				{ "Remove all 360 joints", function()
 					MS.pushUndo("Remove 360 joints")
 					local all = {}
-					for jj = 0, MS.NUM_JOINTS - 1 do table.insert(all, jj) end
+					for jj = 0, MS.numJoints(p) - 1 do table.insert(all, jj) end
 					local n = MS.spinJoints(all, false)
 					MS.toast(n > 0 and ("Put limits back on " .. n .. " joints") or "No joints were set to spin")
 					UI.requestRefresh()
@@ -2315,7 +2321,7 @@ function UI.tabJoints(pane)
 				{ "Apply to all joints", function()
 					MS.pushUndo("All joints")
 					for q = 0, MS.numPlayers - 1 do
-						for jj = 0, MS.NUM_JOINTS - 1 do
+						for jj = 0, MS.numJoints(q) - 1 do
 							if (UI.allForce) then MS.jointSet(q, jj, "maxforce", UI.allForce) end
 							if (UI.allVel) then MS.jointSet(q, jj, "maxvelocity", UI.allVel) end
 						end
@@ -2334,7 +2340,7 @@ function UI.tabJoints(pane)
 					MS.pushUndo(v and "360 joint" or "Limit joint")
 					MS.setJointSpin(p, j, v)
 					if (MS.settings.symmetry and MS.JOINT_MIRROR[j]) then MS.mirrorJoint(p, j, true) end
-					MS.toast(MS.JOINT_NAMES[j] .. (v and " now spins all the way round" or " has its limits back"))
+					MS.toast(MS.jointName(p, j) .. (v and " now spins all the way round" or " has its limits back"))
 					UI.requestRefresh()
 				end },
 			MS.jointSpins(p, j) and { kind = "hint", label = "Limits are off (10 / -10 means no limit)." } or
@@ -3402,7 +3408,7 @@ local function contextHint()
 	if (MS.settings.tool == "measure") then
 		return (MS.measure and MS.measure.a and not MS.measure.b) and "Click the second point" or "Click a point on an object or the floor to start measuring (Snap rounds to the grid)"
 	end
-	if (G.hoverBody) then return "Click to select " .. (MS.BODY_NAMES[G.hoverBody.b] or "this body part") end
+	if (G.hoverBody) then return "Click to select " .. (MS.bodyName(G.hoverBody.p or 0, G.hoverBody.b) or "this body part") end
 	if (UI.isTabOpen("players")) then return "Click a body part in the world or the grid. Use the gizmo to move/resize it." end
 	if (UI.isTabOpen("joints")) then return "Click a joint in the world or the grid to edit it." end
 	if (MS.selCount() == 0) then return "Click an object to select it - or add one from the Objects / Create tab. H = help" end

@@ -260,7 +260,7 @@ end
 ---Average drawn position of a player's body parts
 function MS.playerWorldCenter(p)
 	local sum, n = { 0, 0, 0 }, 0
-	for b = 0, MS.NUM_BODIES - 1 do
+	for b = 0, MS.numBodies(p) - 1 do
 		local w = MS.bodyWorld(p, b)
 		if (w) then sum = V.add(sum, w.pos); n = n + 1 end
 	end
@@ -270,7 +270,7 @@ end
 
 function MS.playerModCenter(p)
 	local sum, n = { 0, 0, 0 }, 0
-	for b = 0, MS.NUM_BODIES - 1 do
+	for b = 0, MS.numBodies(p) - 1 do
 		local o = MS.bodies[p] and MS.bodies[p][b]
 		if (o) then sum = V.add(sum, { o.pos_x, o.pos_y, o.pos_z }); n = n + 1 end
 	end
@@ -588,7 +588,7 @@ function MS.ensurePlayerTriggerGroups()
 	for p = 0, math.max(1, MS.numPlayers) - 1 do
 		local bit = p == 0 and 1 or (p == 1 and 2 or 0)
 		if (bit > 0) then
-			for b = 0, MS.NUM_BODIES - 1 do
+			for b = 0, MS.numBodies(p) - 1 do
 				local o = MS.bodies[p] and MS.bodies[p][b]
 				if (o and (o.trig_id or 0) == 0) then
 					MS.bodySet(p, b, "trig_id", bit)
@@ -1144,7 +1144,7 @@ function MS.checkMod()
 	local bodies = {}
 	if (MS.bodyWorld) then
 		for p = 0, math.max(1, MS.numPlayers or 2) - 1 do
-			for b = 0, MS.NUM_BODIES - 1 do
+			for b = 0, MS.numBodies(p) - 1 do
 				local ok, w = pcall(MS.bodyWorld, p, b)
 				if (ok and w and w.pos) then table.insert(bodies, w.pos) end
 			end
