@@ -439,15 +439,32 @@ function UI.gridFit(w, h, rows)
 	return UI.groupFrac(fracs)
 end
 
+---A number as text that fits a text field `w` wide: drops decimals until it fits (never the whole part).
+---The game's field draws inside w - 4, pads the text 3 px each side and keeps 7 px for the cursor.
+local function fitNumber(v, w, scale)
+	local room = w - 17
+	local s = MS.fmt(v)
+	if (type(v) ~= "number" or get_string_length(s, 4) * scale <= room) then return s end
+	for d = 2, 0, -1 do
+		local t = string.format("%." .. d .. "f", v)
+		if (d > 0) then t = t:gsub("0+$", ""):gsub("%.$", "") end
+		if (t == "-0") then t = "0" end
+		if (get_string_length(t, 4) * scale <= room) then return t end
+		s = t
+	end
+	return s
+end
+
 ---Text input. o: numeric, live (getter for auto refresh), placeholder, align
 local function field(parent, x, y, w, h, value, o, onChange)
 	o = o or {}
+	local scale = UI.textSize("body") * UI.textK
 	local f = TBMenu:spawnTextField2(parent, { x = x, y = y, w = w, h = h }, value or "", o.placeholder, {
 		isNumeric = o.numeric or false,
 		allowDecimal = true,
 		allowNegative = true,
 		fontId = 4,
-		textScale = UI.textSize("body") * UI.textK,
+		textScale = scale,
 		textAlign = o.align or CENTERMID,
 		darkerMode = true,
 		inputType = o.numeric and KEYBOARD_INPUT.NUMBERPAD or KEYBOARD_INPUT.ASCII,
@@ -462,9 +479,19 @@ local function field(parent, x, y, w, h, value, o, onChange)
 	if (o.live) then
 		f:addCustomDisplay(false, function()
 			if (not f.keyboard) then
+				f.msEditing = false
 				local ok, v = pcall(o.live)
-				local s = ok and MS.fmt(v) or ""
+				local s = ok and (o.numeric and fitNumber(v, w, scale) or MS.fmt(v)) or ""
 				if (f.textfieldstr[1] ~= s) then
+					f.textfieldstr[1] = s
+					f.textfieldindex = string.len(s)
+				end
+			elseif (o.numeric and not f.msEditing) then
+				-- Just clicked in: swap the shortened display for the exact value so editing never loses decimals
+				f.msEditing = true
+				local ok, v = pcall(o.live)
+				local s = ok and MS.fmt(v) or nil
+				if (s and f.textfieldstr[1] ~= s) then
 					f.textfieldstr[1] = s
 					f.textfieldindex = string.len(s)
 				end
@@ -1038,16 +1065,18 @@ local function objTransformEntries()
 		for _, idx in ipairs(envTargets("type")) do
 			local ob = MS.objs[idx]
 			local old = ob.type
+			-- Read the old sizes first: the writes below change ob
+			local dx, dy, dz = ob.dims_x, ob.dims_y, ob.dims_z
 			MS.objSet(idx, "type", v)
 			-- Keep the object roughly the same size when switching shapes
 			if (old == 1 and v ~= 1) then
-				MS.objSet(idx, "dims_x", math.max(ob.dims_x or 1, ob.dims_y or 1) / 2)
-				if (v == 2) then MS.objSet(idx, "dims_y", ob.dims_z or 1) end
+				MS.objSet(idx, "dims_x", math.max(dx or 1, dy or 1) / 2)
+				if (v == 2) then MS.objSet(idx, "dims_y", dz or 1) end
 			elseif (old ~= 1 and v == 1) then
-				local r = ob.dims_x or 0.5
+				local r = dx or 0.5
 				MS.objSet(idx, "dims_x", r * 2)
 				MS.objSet(idx, "dims_y", r * 2)
-				MS.objSet(idx, "dims_z", old == 2 and (ob.dims_y or 1) + r * 2 or r * 2)
+				MS.objSet(idx, "dims_z", old == 2 and (dy or 1) + r * 2 or r * 2)
 			end
 		end
 	end))
@@ -3041,6 +3070,7 @@ function UI.selectTab(id)
 end
 
 local function dockRect(side)
+	local top = UI.topBarH()
 	local bottom = WIN_H - UI.statusH()
 	local open = UI.dockState[side].open
 	-- Moved / resized by the user (kept on screen if the window got smaller)
@@ -3048,17 +3078,19 @@ local function dockRect(side)
 	if (L and L.w) then
 		local w = MS.clamp(L.w, 200, WIN_W - 4)
 		local x = MS.clamp(L.x, 0, WIN_W - w)
-		local y = MS.clamp(L.y, 0, bottom - UI.HEADER_H)
+		-- Never under the toolbar: the panel's own tabs would be hidden behind it
+		local lowest = math.max(top, bottom - UI.HEADER_H)
+		local y = MS.clamp(L.y, top, lowest)
 		if (not open) then
 			if (side == "bottom") then
 				-- Tucked away: sit on the bottom edge of where the panel opens
-				y = MS.clamp(L.y + (L.h or UI.HEADER_H) - UI.HEADER_H, 0, bottom - UI.HEADER_H)
+				y = MS.clamp(L.y + (L.h or UI.HEADER_H) - UI.HEADER_H, top, lowest)
 			end
 			return x, y, w, UI.HEADER_H
 		end
-		-- Would run off the bottom of the screen: pop up instead
-		local h = MS.clamp(L.h or 120, 120, bottom)
-		y = math.max(0, math.min(L.y, bottom - h))
+		-- Would run off the bottom of the screen: pop up instead (but not past the toolbar)
+		local h = MS.clamp(L.h or 120, math.min(120, bottom - top), bottom - top)
+		y = math.max(top, math.min(L.y, bottom - h))
 		return x, y, w, h
 	end
 	-- Default: Scene down the left, Properties down the right, the bottom

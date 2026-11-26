@@ -1120,16 +1120,23 @@ end
 ---Export, but first show any warnings from the check
 function MS.exportChecked(name)
 	if (MS.assetReport) then pcall(MS.assetReport, true) end
-	local warns = 0
+	local warns, firstWarn = 0, nil
 	for _, it in ipairs(MS.checkMod()) do
-		if (it.severity == "warn") then warns = warns + 1 end
+		if (it.severity == "warn") then
+			warns = warns + 1
+			firstWarn = firstWarn or it
+		end
 	end
 	if (warns == 0 or not (MS.UI and MS.UI.confirm)) then
 		return MS.exportMod(name)
 	end
 	MS.UI.confirm("Export with " .. warns .. " warning" .. (warns == 1 and "" or "s") .. "?",
 		"The mod check found things that are probably mistakes. Have a look, or export anyway.", {
-			{ "Show me", function() MS.UI.selectTab("stats") end },
+			{ "Show me", function()
+				MS.UI.selectTab("stats")
+				-- The check sits low on the Stats tab, so also select and frame what the first warning is about
+				MS.selectIssue(firstWarn)
+			end },
 			{ "Export anyway", function() MS.exportMod(name) end },
 			{ "Cancel" }
 		})

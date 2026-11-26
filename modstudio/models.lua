@@ -142,14 +142,6 @@ end
 -- Finding .obj files under data/mod_assets
 ---------------------------------------------------------------------------
 
-local function isFolder(path)
-	if (is_folder) then
-		local ok, r = pcall(is_folder, path)
-		if (ok) then return r == true end
-	end
-	return false
-end
-
 ---Every .obj under data/mod_assets as "folder/name" (no extension), sorted. Cheap: only directory listings.
 local function listObjFiles()
 	local out, seen, visited = {}, 0, {}
@@ -164,7 +156,9 @@ local function listObjFiles()
 					seen = seen + 1
 					if (v:lower():match("%.obj$")) then
 						table.insert(out, rel .. v:sub(1, -5))
-					elseif (not v:match("%.%w+$") or isFolder(dir .. "/" .. v)) then
+					elseif (not v:match("%.%w+$")) then
+						-- No is_folder() here: called on a file it crashes the game (it closes a dir handle
+						-- that failed to open). Folders with a dot in their name come from get_folders below.
 						subs[v] = true
 					end
 				end

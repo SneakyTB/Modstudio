@@ -4,7 +4,9 @@ A friendlier, more powerful mod maker for Toribash: a docked panel layout with i
 a 3D move/rotate/scale gizmo, triangles, parent/child hierarchy, undo/redo with a history
 list, multi-select, generators, 3D model assets, a built-in .tbm text editor and project files.
 
-**Version 1.1.1**
+**Version 1.1.2**
+
+1.1.2: bug fixes and quality of life, tested in game. The Models tab no longer crashes the game when data/mod_assets has non-model files in it (textures, Steam cloud files). Switching a cylinder to a box keeps the right height. Number boxes too small for a value show it shortened (10.228 shows as 10) instead of only the last digits (.228), and show the exact value while you edit. Saved panel layouts can no longer end up under the toolbar. Rebuilding objects the game dropped no longer marks the mod as changed. Undo, redo and History jumps keep your selection. Duplicated and pasted objects get their own names (Ramp, Ramp 2, Ramp 3). "Show me" on the export warning selects what the warning is about.
 
 1.1.1: code tidy-up. Removes the old surface-snapping code (object drags have held the object at a fixed camera distance for a while), a few functions nothing called and unused variables. No change to how Mod Studio works.
 

@@ -146,9 +146,10 @@ function MS.triBuild(id)
 end
 
 local origRestore = MS.restore
-function MS.restore(s)
-	origRestore(s)
+function MS.restore(s, ...)
+	local kept = origRestore(s, ...)
 	MS.syncAllHidden()
+	return kept
 end
 
 local origReloadAll = MS.reloadAll
@@ -289,7 +290,8 @@ function MS.undoTo(k)
 	end
 	local target = MS.undoStack[k].snap
 	for _ = n, k, -1 do table.remove(MS.undoStack) end
-	MS.restore(target)
+	local before = MS.selectionBefore()
+	if (MS.restore(target)) then MS.reselect(before) end
 	MS.lastUndoKey = nil
 	MS.syncDirty()
 	MS.toast("Went back " .. (n - k + 1) .. " step" .. (n - k == 0 and "" or "s"))
@@ -306,7 +308,8 @@ function MS.redoTo(m)
 	end
 	local target = MS.redoStack[m].snap
 	for _ = n, m, -1 do table.remove(MS.redoStack) end
-	MS.restore(target)
+	local before = MS.selectionBefore()
+	if (MS.restore(target)) then MS.reselect(before) end
 	MS.lastUndoKey = nil
 	MS.syncDirty()
 	MS.toast("Redid " .. (n - m + 1) .. " step" .. (n - m == 0 and "" or "s"))

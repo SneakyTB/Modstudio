@@ -5,7 +5,7 @@
 MS = MS or {}
 local MS = MS
 
-MS.VERSION = "1.1.1"
+MS.VERSION = "1.1.2"
 MS.HOOK = "modstudio"
 
 local clock = os.clock_real or os.clock
@@ -1292,7 +1292,28 @@ function MS.restore(s, forceRecreate)
 		MS.faceFix = nil
 		MS.restartMatch()
 	end
+	return sameObjs
 end
+
+---Selection to put back after an undo step (only used when restore() kept every object at its index)
+local function selectionBefore()
+	local keep = {}
+	for idx in pairs(MS.sel) do keep[idx] = true end
+	return { sel = keep, primary = MS.primary }
+end
+
+local function reselect(before)
+	for idx in pairs(before.sel) do
+		if (MS.objs[idx]) then MS.sel[idx] = true end
+	end
+	if (before.primary and MS.sel[before.primary]) then
+		MS.primary = before.primary
+	else
+		MS.primary = MS.selList()[1]
+	end
+	selChanged()
+end
+MS.selectionBefore, MS.reselect = selectionBefore, reselect
 
 ---The game's mod maker can drop its objects on its own (seen when moving Tori's
 ---head). If objects Mod Studio knows about are gone from the game, rebuild them
@@ -1311,7 +1332,10 @@ function MS.repairEngine()
 		if (not activeEJ[idx]) then ejMissing = ejMissing + 1 end
 	end
 	if (missing == 0 and ejMissing == 0) then return 0 end
+	-- Only the game's copy is rebuilt, so the mod's saved / unsaved state stays as it was
+	local changed, sinceAutosave = MS.changed, MS.changedSinceAutosave
 	MS.restore(MS.snapshot(), true)
+	MS.changed, MS.changedSinceAutosave = changed, sinceAutosave
 	-- Whatever dropped the objects may have reloaded the players too: push ours back
 	MS.pushPlayersToEngine()
 	MS.flush(true)
@@ -1374,7 +1398,8 @@ function MS.undo()
 		return
 	end
 	table.insert(MS.redoStack, { label = e.label, snap = MS.snapshot() })
-	MS.restore(e.snap)
+	local before = selectionBefore()
+	if (MS.restore(e.snap)) then reselect(before) end
 	MS.lastUndoKey = nil
 	MS.syncDirty()
 	MS.toast("Undo: " .. e.label)
@@ -1387,7 +1412,8 @@ function MS.redo()
 		return
 	end
 	table.insert(MS.undoStack, { label = e.label, snap = MS.snapshot() })
-	MS.restore(e.snap)
+	local before = selectionBefore()
+	if (MS.restore(e.snap)) then reselect(before) end
 	MS.lastUndoKey = nil
 	MS.syncDirty()
 	MS.toast("Redo: " .. e.label)
@@ -1622,6 +1648,24 @@ function MS.pasteClip(clip, offset, keepUids)
 	offset = offset or { 0, 0, 0 }
 	local newSel = {}
 	local remap = {}
+	-- Copies get a free name ("Ramp" -> "Ramp 2"); an in-place re-create (keepUids) keeps the original names
+	local used = {}
+	if (not keepUids) then
+		for _, m in pairs(MS.meta) do if (m.name) then used[m.name] = true end end
+		for _, t in pairs(MS.tris) do if (t.name) then used[t.name] = true end end
+	end
+	local function copyName(name)
+		if (keepUids or type(name) ~= "string" or name == "") then return name end
+		local base, n = name:match("^(.-)%s+(%d+)$")
+		base, n = base or name, tonumber(n) or 1
+		local candidate
+		repeat
+			n = n + 1
+			candidate = base .. " " .. n
+		until not used[candidate]
+		used[candidate] = true
+		return candidate
+	end
 	local function fresh(uid)
 		if (uid == nil or keepUids) then return uid end
 		remap[uid] = remap[uid] or MS.newUid()
@@ -1645,13 +1689,14 @@ function MS.pasteClip(clip, offset, keepUids)
 		f.pos_z = (f.pos_z or 0) + offset[3]
 		local m = MS.deepcopy(item.meta) or {}
 		m.tri = nil
+		m.name = copyName(m.name)
 		relink(m)
 		local idx = MS.createObj(f, m)
 		if (idx) then table.insert(newSel, idx) end
 	end
 	for _, t in ipairs(clip.tris) do
 		local id = MS.triCreate(V.add(t.a, offset), V.add(t.b, offset), V.add(t.c, offset), {
-			thick = t.thick, slices = t.slices, smooth = t.smooth, props = MS.deepcopy(t.props), name = t.name
+			thick = t.thick, slices = t.slices, smooth = t.smooth, props = MS.deepcopy(t.props), name = copyName(t.name)
 		})
 		if (id) then
 			local link = { uid = t.uid, parent = t.parent }
