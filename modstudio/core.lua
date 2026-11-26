@@ -1,6 +1,4 @@
--- Mod Studio: core data layer
--- Wraps the native mod maker API (get_mod_envobj/set_mod_envobj/...) with a
--- Lua-side cache, selection, undo/redo, triangles, generators and project files.
+
 
 MS = MS or {}
 local MS = MS
@@ -13,10 +11,6 @@ MS.clock = clock
 
 local sin, cos, atan2, asin, sqrt, abs, floor = math.sin, math.cos, math.atan2, math.asin, math.sqrt, math.abs, math.floor
 local rad, deg = math.rad, math.deg
-
----------------------------------------------------------------------------
--- Generic helpers
----------------------------------------------------------------------------
 
 function MS.deepcopy(v)
 	if (type(v) ~= "table") then
@@ -64,7 +58,6 @@ function MS.sortedKeys(t)
 	return keys
 end
 
----Serializes plain Lua data (numbers, strings, booleans, tables)
 function MS.serialize(v)
 	local t = type(v)
 	if (t == "number") then
@@ -119,61 +112,57 @@ function MS.readData(path)
 	return nil
 end
 
----------------------------------------------------------------------------
--- Settings (persisted to data/script/modstudio/settings.cfg)
----------------------------------------------------------------------------
-
 MS.SETTINGS_FILE = "modstudio/settings.cfg"
 MS.PROJECT_DIR = "modstudio/projects/"
 
 MS.DEFAULT_SETTINGS = {
-	tool = "move",          -- select / move / rotate / scale
-	space = "world",        -- world / local
+	tool = "move",
+	space = "world",
 	snap = true,
 	gridStep = 0.25,
 	rotStep = 15,
 	scaleStep = 0.05,
 	showGrid = true,
 	gridExtent = 50,
-	gridFix = 0,            -- settings migrations done for the grid
-	autosaveFix = 0,        -- settings migration: old 1 min default -> 5 min
+	gridFix = 0,
+	autosaveFix = 0,
 	showLabels = false,
 	showLinks = true,
 	gizmoSize = 95,
-	gizmoCenter = false,    -- move / scale gizmo: centre dot (free move, even resize)
-	gizmoPlanes = false,    -- move gizmo: plane squares (move on two axes)
+	gizmoCenter = false,
+	gizmoPlanes = false,
 	newStatic = true,
 	autosave = true,
-	autosaveMinutes = 5,    -- how often autosave runs (when something changed)
-	rotConvention = 1,      -- 1: Rz*Ry*Rx (Toribash default), 2: transposed
-	rotUnit = "deg",        -- units of rot_* in the engine API ("deg" / "rad"), measured by MS.calibrate
-	sizeScale = 1,          -- engine dims per unit of full size, measured by MS.calibrate
-	camMethod = "hook",     -- how to move the camera from a script: hook / native / hold
-	camMethodOk = true,     -- true once camMethod is known to move the camera (hook confirmed in game)
-	camFix = 0,             -- settings migration marker for the camera method
-	objLimit = 0,           -- max env objects the game allows (0 = not measured yet)
-	showDojo = true,        -- draw the dojo outline on the floor
-	modelPreview = true,    -- draw each object's 3D model (use_model) in the editor
-	modelDepth = 2,         -- folders between data/mod_assets and the exported mod: 2 = modmaker/<name>, 1 = data/mod/<name>
-	assetNote = false,      -- add "This mod needs these assets" to the welcome message on export
-	symmetry = false,       -- mirror body/joint edits to the other side
+	autosaveMinutes = 5,
+	rotConvention = 1,
+	rotUnit = "deg",
+	sizeScale = 1,
+	camMethod = "hook",
+	camMethodOk = true,
+	camFix = 0,
+	objLimit = 0,
+	showDojo = true,
+	modelPreview = true,
+	modelDepth = 2,
+	assetNote = false,
+	symmetry = false,
 	bodyGizmo = true,
-	moveChildren = true,    -- moving a parent moves its children
-	showHierarchy = true,   -- parent lines for the selection
+	moveChildren = true,
+	showHierarchy = true,
 	showAllHierarchy = false,
-	scrollPush = true,      -- wheel pushes a click-dragged object along the view line (off: wheel zooms)
-	altDuplicate = true,    -- Alt + gizmo drag drags out a copy
-	layout = {},            -- moved / resized panels: side -> { x, y, w, h }
-	dockSizes = {},         -- dragged panel sizes: left / right width, bottom height
-	dockState = nil,        -- which tabs are open: side -> { active, open }
-	uiScale = 1.15,         -- 0.85 / 1 / 1.15 / 1.3
-	accent = "white",       -- highlight color (see UI.ACCENTS)
+	scrollPush = true,
+	altDuplicate = true,
+	layout = {},
+	dockSizes = {},
+	dockState = nil,
+	uiScale = 1.15,
+	accent = "white",
 	accentCustom = { 0.9, 0.62, 0.62 },
-	theme = "charcoal",     -- main panel colour (see UI.THEMES)
+	theme = "charcoal",
 	themeCustom = { 0.4, 0.4, 0.45 },
 	squareCorners = false,
-	panelOpacity = 0.5,     -- 0.3 .. 1, panel bodies only
-	selColor = "cyan",      -- 3D view highlight colours (see MS.VIEW_COLORS)
+	panelOpacity = 0.5,
+	selColor = "cyan",
 	primaryColor = "yellow",
 	hoverColor = "yellow",
 	hoverOutline = "white",
@@ -192,32 +181,32 @@ function MS.loadSettings()
 	local saved = MS.readData(MS.SETTINGS_FILE)
 	if (saved) then
 		for k, v in pairs(saved) do
-			-- Keys whose default is nil (so not in the table above) are listed here, or they'd be dropped
+
 			if (MS.settings[k] ~= nil or k == "panelX" or k == "panelY" or k == "dockState") then
 				MS.settings[k] = v
 			end
 		end
 	end
-	-- Earlier builds could wrongly switch away from the camera hook at the zoom limit
+
 	if ((tonumber(MS.settings.camFix) or 0) < 2) then
 		MS.settings.camMethod = "hook"
 		MS.settings.camMethodOk = true
 	end
-	-- A test build briefly turned scroll push off: put it back on
+
 	if ((tonumber(MS.settings.camFix) or 0) < 4) then
 		MS.settings.scrollPush = true
 		MS.settings.camFix = 4
 	end
-	-- Gold was dropped from the 3D view colours (it looked the same as Yellow)
+
 	for _, k in ipairs({ "selColor", "primaryColor", "hoverColor", "hoverOutline" }) do
 		if (MS.settings[k] == "gold") then MS.settings[k] = "yellow" end
 	end
-	-- Autosave used to default to every minute: move anyone still on that default to 5
+
 	if ((tonumber(MS.settings.autosaveFix) or 0) < 1) then
 		if ((tonumber(MS.settings.autosaveMinutes) or 1) == 1) then MS.settings.autosaveMinutes = 5 end
 		MS.settings.autosaveFix = 1
 	end
-	-- The grid used to default to 16: move anyone still on the old default to the bigger grid
+
 	if ((tonumber(MS.settings.gridFix) or 0) < 1) then
 		if ((tonumber(MS.settings.gridExtent) or 16) == 16) then MS.settings.gridExtent = 50 end
 		MS.settings.gridFix = 1
@@ -227,10 +216,6 @@ end
 function MS.saveSettings()
 	MS.writeFile(MS.SETTINGS_FILE, "return " .. MS.serialize(MS.settings))
 end
-
----------------------------------------------------------------------------
--- Vector / matrix math (vectors are {x, y, z}, matrices are 3x3 m[row][col])
----------------------------------------------------------------------------
 
 local V = {}
 MS.V = V
@@ -284,7 +269,6 @@ function M.apply(m, v)
 	}
 end
 
----Column j of the matrix = local axis j in world space
 function M.col(m, j) return { m[1][j], m[2][j], m[3][j] } end
 
 function M.fromCols(a, b, c)
@@ -295,7 +279,6 @@ function M.fromCols(a, b, c)
 	}
 end
 
----R = Rz * Ry * Rx (angles in degrees) - matches Utils3D.GetEulerFromMatrixTB
 local function eulerZYX(x, y, z)
 	x, y, z = rad(x), rad(y), rad(z)
 	local cx, sx, cy, sy, cz, sz = cos(x), sin(x), cos(y), sin(y), cos(z), sin(z)
@@ -320,7 +303,6 @@ local function matToZYX(R)
 	return deg(x), deg(y), deg(z)
 end
 
----Euler (degrees, as stored in rot_x/y/z) to rotation matrix
 function M.fromEuler(x, y, z)
 	local R = eulerZYX(x or 0, y or 0, z or 0)
 	if (MS.settings and MS.settings.rotConvention == 2) then
@@ -329,7 +311,6 @@ function M.fromEuler(x, y, z)
 	return R
 end
 
----Rotation matrix to euler (degrees), inverse of M.fromEuler
 function M.toEuler(R)
 	if (MS.settings and MS.settings.rotConvention == 2) then
 		R = M.transpose(R)
@@ -343,7 +324,6 @@ function M.toEuler(R)
 	return clean(x), clean(y), clean(z)
 end
 
----Rotation of `angle` degrees around a unit axis (Rodrigues)
 function M.axisAngle(axis, angle)
 	local a = V.norm(axis)
 	local t = rad(angle)
@@ -357,16 +337,11 @@ function M.axisAngle(axis, angle)
 	}
 end
 
----Mirror a rotation across the plane perpendicular to world axis k
 function M.mirror(R, k)
 	local S = M.identity()
 	S[k][k] = -1
 	return M.mul(M.mul(S, R), S)
 end
-
----------------------------------------------------------------------------
--- Native API field definitions
----------------------------------------------------------------------------
 
 MS.SHAPES = { [0] = "Sphere", [1] = "Box", [2] = "Cylinder" }
 
@@ -418,8 +393,6 @@ MS.JOINT_NAMES = {
 }
 MS.NUM_JOINTS = 20
 
----Extra joints (Toribash alpha 2): extra bodies are numbered from 21, extra joints from 20.
----Everything below falls back to the classic 21 bodies / 20 joints on older game versions.
 MS.EXTRA_BODY_FIRST, MS.EXTRA_JOINT_FIRST = 21, 20
 
 local function countOf(fn, p, classic)
@@ -429,7 +402,6 @@ local function countOf(fn, p, classic)
 	return classic
 end
 
----How many bodies / joints player p has, extra limbs included
 function MS.numBodies(p) return countOf(get_num_bodies, p, MS.NUM_BODIES) end
 function MS.numJoints(p) return countOf(get_num_joints, p, MS.NUM_JOINTS) end
 
@@ -452,7 +424,6 @@ local function extraName(kind, infoFn, p, i, label)
 	return name
 end
 
----Display name of a body part / joint; extra limbs use the name from the mod
 function MS.bodyName(p, b)
 	return MS.BODY_NAMES[b] or extraName("body", get_body_info, p, b, "Extra body")
 end
@@ -460,7 +431,6 @@ function MS.jointName(p, j)
 	return MS.JOINT_NAMES[j] or extraName("joint", get_joint_info, p, j, "Extra joint")
 end
 
----Names of every part of player p as a table indexed from 0 (for lists)
 function MS.bodyNameList(p)
 	local t = {}
 	for b = 0, MS.numBodies(p) - 1 do t[b] = MS.bodyName(p, b) end
@@ -472,7 +442,6 @@ function MS.jointNameList(p)
 	return t
 end
 
----The two body parts a joint connects (indices), or nil on older versions
 function MS.jointBodies(p, j)
 	if (type(get_joint_bodies) ~= "function") then return nil end
 	local ok, a, b = pcall(get_joint_bodies, p, j)
@@ -487,7 +456,6 @@ MS.BODY_MIRROR = { [5] = 8, [8] = 5, [6] = 9, [9] = 6, [7] = 10, [10] = 7, [11] 
 MS.JOINT_MIRROR = { [4] = 7, [7] = 4, [5] = 8, [8] = 5, [6] = 9, [9] = 6, [10] = 11, [11] = 10,
 	[12] = 13, [13] = 12, [14] = 15, [15] = 14, [16] = 17, [17] = 16, [18] = 19, [19] = 18 }
 
--- Fields that failed to read in this client version; the UI hides them
 MS.unsupported = MS.unsupported or { env = {}, body = {}, joint = {}, ej = {} }
 
 local function normalize(field, v)
@@ -497,16 +465,10 @@ local function normalize(field, v)
 	return v
 end
 
----------------------------------------------------------------------------
--- Engine units. Mod Studio always works in degrees and full box sizes; the
--- engine API may use radians / half sizes. MS.calibrate() measures which.
----------------------------------------------------------------------------
-
 MS.ROT_FIELDS = { rot_x = true, rot_y = true, rot_z = true }
 MS.SIZE_FIELDS = { dims_x = true, dims_y = true, dims_z = true, sides_x = true, sides_y = true, sides_z = true,
 	altsides_x = true, altsides_y = true, altsides_z = true }
 
----Engine units per degree / per unit of full size
 function MS.rotK() return (MS.settings and MS.settings.rotUnit == "rad") and (math.pi / 180) or 1 end
 function MS.sizeK() return (MS.settings and MS.settings.sizeScale) or 1 end
 
@@ -525,28 +487,21 @@ local function toEngine(f, v)
 end
 MS.toEngine, MS.fromEngine = toEngine, fromEngine
 
----------------------------------------------------------------------------
--- Cache + engine writes
----------------------------------------------------------------------------
-
-MS.objs = MS.objs or {}      -- env object index -> field table
-MS.ejs = MS.ejs or {}        -- env joint index -> field table
-MS.bodies = MS.bodies or {}  -- [player][body] -> field table
-MS.joints = MS.joints or {}  -- [player][joint] -> field table
-MS.meta = MS.meta or {}      -- env object index -> { name, group, locked, tri, uid, parent }
-MS.tris = MS.tris or {}      -- triangle id -> triangle definition
+MS.objs = MS.objs or {}
+MS.ejs = MS.ejs or {}
+MS.bodies = MS.bodies or {}
+MS.joints = MS.joints or {}
+MS.meta = MS.meta or {}
+MS.tris = MS.tris or {}
 MS.nextTri = MS.nextTri or 1
 MS.numPlayers = MS.numPlayers or 2
 
----Fields the game can show instantly on its live object (no world rebuild needed)
 MS.LIVE_FIELDS = { pos_x = true, pos_y = true, pos_z = true, rot_x = true, rot_y = true, rot_z = true,
 	dims_x = true, dims_y = true, dims_z = true, color_r = true, color_g = true, color_b = true, color_a = true }
 MS.livePending = MS.livePending or {}
--- True while every change since the last rebuild can be shown live
+
 if (MS.onlyLive == nil) then MS.onlyLive = true end
 
----Marks the world as needing a rebuild. `liveIdx` = the change was only to a
----live field of that object, so it can be shown right away (see MS.flush).
 function MS.markDirty(liveIdx)
 	MS.needRefresh = true
 	MS.changed = true
@@ -559,12 +514,6 @@ function MS.markDirty(liveIdx)
 	end
 end
 
----------------------------------------------------------------------------
--- Live object updates: the game keeps one live object per mod object. Moving
--- that directly (set_obj_pos etc.) is instant, unlike a full world rebuild,
--- so drags stay smooth; the proper rebuild runs once editing pauses.
----------------------------------------------------------------------------
-
 MS.worldIdx = MS.worldIdx or {}
 MS.worldMapDirty = true
 
@@ -574,12 +523,11 @@ local function worldPosMatches(i, o)
 		and math.abs(y - (o.pos_y or 0)) < 1e-3 and math.abs(z - (o.pos_z or 0)) < 1e-3
 end
 
----Works out which game object shows which mod object, by position
 function MS.rebuildWorldMap()
 	MS.worldMapDirty = false
 	local list = MS.activeObjIndices()
 	local map = {}
-	-- Usually the n-th game object is the n-th mod object
+
 	local inOrder = true
 	for k, idx in ipairs(list) do
 		local o = MS.objs[idx]
@@ -591,9 +539,7 @@ function MS.rebuildWorldMap()
 		end
 	end
 	if (not inOrder) then
-		-- Match by position + size. Objects that still look identical to another
-		-- (e.g. pasted in place) are left unmapped and just use normal rebuilds,
-		-- so a drag can never move the wrong object.
+
 		map = {}
 		local function sidesMatch(i, o)
 			local ok, a, b, c = pcall(get_obj_sides, i)
@@ -623,14 +569,12 @@ function MS.rebuildWorldMap()
 	MS.worldIdx = map
 end
 
----Called every frame: maps objects once a rebuild has settled (cache == world)
 function MS.tickWorldMap()
 	if (MS.worldMapDirty and not MS.needRefresh) then
 		pcall(MS.rebuildWorldMap)
 	end
 end
 
----Pushes an object's cached position / rotation / size / color to its live game object
 local function liveObj(idx)
 	local w, o = MS.worldIdx[idx], MS.objs[idx]
 	if (not w or not o) then return false end
@@ -660,29 +604,22 @@ local function liveObj(idx)
 end
 MS.liveObj = liveObj
 
----How long a world rebuild takes (smoothed, seconds) - see MS.flush
 MS.refreshCost = MS.refreshCost or 0
 MS.lastRefresh = MS.lastRefresh or 0
 
----Gap to leave between world rebuilds while editing. Cheap rebuilds aren't
----held back at all; slow ones (big mods) run at most ~every 3x their cost.
 function MS.refreshInterval()
 	local cost = MS.refreshCost or 0
 	if (cost < 0.004) then return 0 end
 	return MS.clamp(cost * 3, 0.016, 0.25)
 end
 
----Rebuilds the mod maker world if anything changed. The game rebuilds every
----object and player each time, which is what made editing laggy, so repeated
----changes (scrubbing, typing, dragging) are batched unless `force` is set.
 function MS.flush(force)
 	if (not MS.needRefresh) then return end
-	-- A body part / joint being moved is shown live; rebuild when it's let go
+
 	if (not force and MS.G and MS.G.drag and MS.G.drag.livePreview) then return end
 	local now = clock()
 	if (not force) then
-		-- Only moves / resizes / recolors so far: show them on the live objects now
-		-- and hold the full rebuild until editing pauses (keeps drags smooth)
+
 		if (MS.onlyLive and not MS.worldMapDirty) then
 			for idx in pairs(MS.livePending) do
 				if (not liveObj(idx)) then MS.liveFailed = true end
@@ -699,10 +636,10 @@ function MS.flush(force)
 	pcall(refresh_mod_maker_world)
 	local after = clock()
 	local took = math.max(0, after - now)
-	-- Smooth so one slow frame doesn't throttle everything
+
 	MS.refreshCost = (MS.refreshCost or 0) * 0.7 + took * 0.3
 	MS.lastRefresh = after
-	-- The rebuild may renumber the game's objects: map them again next frame
+
 	MS.livePending, MS.onlyLive, MS.liveFailed = {}, true, false
 	MS.worldMapDirty = true
 end
@@ -742,7 +679,7 @@ end
 
 function MS.readBody(p, b)
 	local o = {}
-	-- Extra limbs may not answer every field: that must never hide a field on the classic parts
+
 	local extra, failed = b >= MS.NUM_BODIES, false
 	for _, f in ipairs(MS.BODY_FIELDS) do
 		if (not MS.unsupported.body[f]) then
@@ -800,7 +737,6 @@ end
 function MS.activeObjIndices() return activeList(get_active_mod_envobjs) end
 function MS.activeEJIndices() return activeList(get_active_mod_envjoints) end
 
----Re-reads everything from the engine. Keeps metadata for indices that still exist.
 function MS.reloadAll()
 	local oldMeta = MS.meta or {}
 	MS.objs, MS.ejs, MS.meta = {}, {}, {}
@@ -811,7 +747,7 @@ function MS.reloadAll()
 	for _, idx in ipairs(MS.activeEJIndices()) do
 		MS.readEJ(idx)
 	end
-	-- Drop triangles whose slices no longer exist
+
 	for id, t in pairs(MS.tris) do
 		local alive = {}
 		for _, idx in ipairs(t.objs) do
@@ -850,7 +786,7 @@ function MS.objSet(idx, f, v)
 	v = normalize(f, v)
 	o[f] = v
 	pcall(set_mod_envobj, idx, f, toEngine(f, v))
-	-- Keep triangle-wide properties in sync so rebuilds keep them
+
 	local m = MS.meta[idx]
 	if (m and m.tri and MS.tris[m.tri] and MS.TRI_PROPS[f]) then
 		local t = MS.tris[m.tri]
@@ -919,7 +855,6 @@ function MS.setObjRot(idx, R)
 	MS.objSet(idx, "rot_z", z)
 end
 
----Full box extents of a shape in its local frame (used for outlines / floor drop)
 function MS.shapeExtents(shape, dx, dy, dz)
 	dx, dy, dz = dx or 0, dy or 0, dz or 0
 	if (shape == 0) then
@@ -935,7 +870,6 @@ function MS.objExtents(idx)
 	return MS.shapeExtents(o.type, o.dims_x, o.dims_y, o.dims_z)
 end
 
----Lowest world Z of an object's oriented bounding box
 function MS.objBottom(idx)
 	local p = MS.objPos(idx)
 	local R = MS.objRot(idx)
@@ -959,18 +893,10 @@ function MS.objName(idx)
 	return (MS.SHAPES[o and o.type or 1] or "Object") .. " " .. idx
 end
 
----------------------------------------------------------------------------
--- Toasts / status
----------------------------------------------------------------------------
-
 function MS.toast(msg)
 	MS.toastMsg = msg
 	MS.toastClock = clock()
 end
-
----------------------------------------------------------------------------
--- Selection (env objects). Selecting a triangle slice selects the whole triangle.
----------------------------------------------------------------------------
 
 MS.sel = MS.sel or {}
 MS.primary = MS.primary or nil
@@ -1068,7 +994,6 @@ function MS.selCount()
 	return #MS.selList()
 end
 
----Selected triangles (set of ids) and plain (non-triangle) objects
 function MS.selSplit()
 	local tris, plain = {}, {}
 	for _, idx in ipairs(MS.selList()) do
@@ -1082,7 +1007,6 @@ function MS.selSplit()
 	return tris, plain
 end
 
----The single selected triangle, if the selection is exactly one triangle
 function MS.selSingleTri()
 	local tris, plain = MS.selSplit()
 	if (#plain > 0) then return nil end
@@ -1106,10 +1030,6 @@ function MS.selCenter()
 	return V.mul(sum, 1 / n)
 end
 
----------------------------------------------------------------------------
--- Undo / redo (whole-scene snapshots, coalesced for typing)
----------------------------------------------------------------------------
-
 MS.undoStack = MS.undoStack or {}
 MS.redoStack = MS.redoStack or {}
 MS.MAX_UNDO = 80
@@ -1127,9 +1047,6 @@ function MS.snapshot()
 	}
 end
 
----Records the current state before a change. Calls with the same `key`
----within a short time are merged so typing a number is one undo step.
----Runs `fn` as a single undo step: everything it changes undoes in one Ctrl+Z
 function MS.withUndo(label, fn)
 	MS.pushUndo(label)
 	local was = MS.undoSuppress
@@ -1191,7 +1108,6 @@ local function writeEJFields(idx, fields, skipSame)
 	end
 end
 
----True if the game still has every object in the cache
 local function engineHasAll()
 	local active = {}
 	for _, idx in ipairs(MS.activeObjIndices()) do active[idx] = true end
@@ -1201,8 +1117,6 @@ local function engineHasAll()
 	return true
 end
 
----Restores a snapshot. With `forceRecreate` (or when the game has lost objects)
----every object is rebuilt instead of only writing changed fields.
 function MS.restore(s, forceRecreate)
 	MS.endDragSilently()
 	local map = {}
@@ -1227,7 +1141,6 @@ function MS.restore(s, forceRecreate)
 		end
 	end
 
-	-- Env joints
 	if (sameObjs and sameKeys(MS.ejs, s.ejs)) then
 		for idx, fields in pairs(s.ejs) do
 			local cur = MS.ejs[idx]
@@ -1251,7 +1164,6 @@ function MS.restore(s, forceRecreate)
 		end
 	end
 
-	-- Metadata + triangles, remapped to new indices
 	MS.meta = {}
 	for old, m in pairs(s.meta) do
 		if (map[old]) then MS.meta[map[old]] = MS.deepcopy(m) end
@@ -1268,7 +1180,6 @@ function MS.restore(s, forceRecreate)
 	end
 	MS.nextTri = s.nextTri or MS.nextTri
 
-	-- Players
 	for p, parts in pairs(s.bodies or {}) do
 		for b, fields in pairs(parts) do
 			local cur = MS.bodies[p] and MS.bodies[p][b]
@@ -1293,7 +1204,7 @@ function MS.restore(s, forceRecreate)
 	local posBefore, rotBefore = MS.getRule("engageplayerpos"), MS.getRule("engageplayerrot")
 	MS.applyRules(s.rules)
 	for _, rn in ipairs({ "engageplayerpos", "engageplayerrot" }) do
-		-- setRule also tracks values the engine doesn't echo back
+
 		local want = s.rules and s.rules[rn]
 		if (want ~= nil and tostring(want) ~= tostring(MS.getRule(rn))) then MS.setRule(rn, want) end
 	end
@@ -1301,7 +1212,7 @@ function MS.restore(s, forceRecreate)
 
 	MS.markDirty()
 	MS.selClear()
-	-- Per-player start rules only take effect on a new match (undo / redo of a player move or turn)
+
 	if (s.rules and (tostring(MS.getRule("engageplayerpos")) ~= tostring(posBefore)
 		or tostring(MS.getRule("engageplayerrot")) ~= tostring(rotBefore))) then
 		MS.faceFix = nil
@@ -1310,7 +1221,6 @@ function MS.restore(s, forceRecreate)
 	return sameObjs
 end
 
----Selection to put back after an undo step (only used when restore() kept every object at its index)
 local function selectionBefore()
 	local keep = {}
 	for idx in pairs(MS.sel) do keep[idx] = true end
@@ -1330,9 +1240,6 @@ local function reselect(before)
 end
 MS.selectionBefore, MS.reselect = selectionBefore, reselect
 
----The game's mod maker can drop its objects on its own (seen when moving Tori's
----head). If objects Mod Studio knows about are gone from the game, rebuild them
----from the cache. Returns how many were missing.
 function MS.repairEngine()
 	local active = {}
 	for _, idx in ipairs(MS.activeObjIndices()) do active[idx] = true end
@@ -1347,11 +1254,11 @@ function MS.repairEngine()
 		if (not activeEJ[idx]) then ejMissing = ejMissing + 1 end
 	end
 	if (missing == 0 and ejMissing == 0) then return 0 end
-	-- Only the game's copy is rebuilt, so the mod's saved / unsaved state stays as it was
+
 	local changed, sinceAutosave = MS.changed, MS.changedSinceAutosave
 	MS.restore(MS.snapshot(), true)
 	MS.changed, MS.changedSinceAutosave = changed, sinceAutosave
-	-- Whatever dropped the objects may have reloaded the players too: push ours back
+
 	MS.pushPlayersToEngine()
 	MS.flush(true)
 	echo("Mod Studio: the game dropped " .. missing .. " object" .. (missing == 1 and "" or "s") ..
@@ -1361,7 +1268,6 @@ function MS.repairEngine()
 	return missing
 end
 
----Writes every cached body part / joint field to the game
 function MS.pushPlayersToEngine()
 	for p, parts in pairs(MS.bodies) do
 		for b, fields in pairs(parts) do
@@ -1380,7 +1286,6 @@ function MS.pushPlayersToEngine()
 	MS.needRefresh = true
 end
 
----Called every frame; checks the game still has everything about once a second
 function MS.tickRepair()
 	local now = clock()
 	if (MS.G and MS.G.drag) then return end
@@ -1389,7 +1294,6 @@ function MS.tickRepair()
 	pcall(MS.repairEngine)
 end
 
----Marks the current state as the saved one (after export, load, open)
 function MS.markClean()
 	MS.changed = false
 	MS.cleanDepth = #MS.undoStack
@@ -1397,7 +1301,6 @@ function MS.markClean()
 	MS.lastUndoKey = nil
 end
 
----After undo/redo: the mod counts as unchanged again when we are back at the saved state
 function MS.syncDirty()
 	if (MS.cleanValid and #MS.undoStack == MS.cleanDepth) then
 		MS.changed = false
@@ -1434,10 +1337,6 @@ function MS.redo()
 	MS.toast("Redo: " .. e.label)
 end
 
----------------------------------------------------------------------------
--- Creating / deleting objects
----------------------------------------------------------------------------
-
 MS.PALETTE = {
 	{ 0.90, 0.30, 0.25 }, { 0.95, 0.60, 0.20 }, { 0.98, 0.85, 0.25 }, { 0.45, 0.80, 0.30 },
 	{ 0.25, 0.70, 0.65 }, { 0.30, 0.55, 0.95 }, { 0.55, 0.40, 0.90 }, { 0.90, 0.45, 0.75 },
@@ -1451,7 +1350,6 @@ function MS.nextColor()
 	return MS.PALETTE[MS.paletteCursor]
 end
 
----Ground point the camera is looking at, snapped to the grid
 function MS.spawnPoint()
 	if (MS.spawnOverride) then return V.copy(MS.spawnOverride) end
 	local p = { 0, 0, 0 }
@@ -1462,7 +1360,7 @@ function MS.spawnPoint()
 	local step = MS.settings.gridStep > 0 and MS.settings.gridStep or 0.25
 	p[1] = MS.round(p[1], step)
 	p[2] = MS.round(p[2], step)
-	-- Nudge away from existing objects so new ones don't stack inside each other
+
 	for _ = 1, 12 do
 		local clash = false
 		for idx in pairs(MS.objs) do
@@ -1478,7 +1376,6 @@ function MS.spawnPoint()
 	return p
 end
 
----The game refused a new object: whatever exists now is the limit
 function MS.noteObjectLimit()
 	local n = #MS.activeObjIndices()
 	if (n > 0 and MS.settings.objLimit ~= n) then
@@ -1488,8 +1385,6 @@ function MS.noteObjectLimit()
 	return n
 end
 
----Finds the env object limit by creating placeholders until the game says no,
----then removes them. Returns the limit or nil.
 function MS.measureObjectLimit()
 	local made = {}
 	local cap = 10000
@@ -1507,7 +1402,6 @@ function MS.measureObjectLimit()
 	return limit
 end
 
----Creates an env object. `fields` overrides defaults. Returns the index or nil.
 function MS.createObj(fields, meta)
 	local ok, idx = pcall(create_mod_envobj)
 	if (not ok or idx == nil) then
@@ -1535,7 +1429,6 @@ function MS.createObj(fields, meta)
 	return idx
 end
 
----Creates a primitive at the spawn point. kind: box/sphere/cylinder/floor/wall/pillar/platform/ball
 function MS.addPrimitive(kind)
 	MS.pushUndo("Add " .. kind)
 	local p = MS.spawnPoint()
@@ -1581,7 +1474,7 @@ function MS.addPrimitive(kind)
 end
 
 function MS.deleteObjRaw(idx)
-	-- Remove links that reference this object first
+
 	for j, ej in pairs(MS.ejs) do
 		if (ej.obj1 == idx or ej.obj2 == idx) then
 			pcall(delete_mod_envjoint, j)
@@ -1610,7 +1503,7 @@ function MS.deleteSelected()
 		return
 	end
 	MS.pushUndo("Delete")
-	-- Children of deleted objects stay, moving up to the nearest surviving parent
+
 	local orphans = 0
 	if (MS.hierBeforeDelete) then
 		local set = MS.selKeys()
@@ -1634,9 +1527,8 @@ function MS.deleteSelected()
 		(orphans > 0 and (" - kept " .. orphans .. " child" .. (orphans == 1 and "" or "ren") .. " (use Delete branch to remove them too)") or ""))
 end
 
----Copies selection into a clipboard table (objects + triangles)
 function MS.copySelection()
-	-- Copying a parent copies its children too
+
 	local tris, plain = (MS.selSplitFamily or MS.selSplit)()
 	if (#plain == 0 and next(tris) == nil) then
 		MS.toast("Nothing selected to copy")
@@ -1654,16 +1546,12 @@ function MS.copySelection()
 	return clip
 end
 
----Pastes a clipboard with an offset. Returns the new selection list.
----Parent links inside the clip are kept between the copies; copies of top
----level items keep the original's parent. `keepUids` reuses the clip's ids
----(only when the originals were deleted first, e.g. mirror in place).
 function MS.pasteClip(clip, offset, keepUids)
 	if (not clip) then return {} end
 	offset = offset or { 0, 0, 0 }
 	local newSel = {}
 	local remap = {}
-	-- Copies get a free name ("Ramp" -> "Ramp 2"); an in-place re-create (keepUids) keeps the original names
+
 	local used = {}
 	if (not keepUids) then
 		for _, m in pairs(MS.meta) do if (m.name) then used[m.name] = true end end
@@ -1750,11 +1638,6 @@ function MS.duplicateSelected()
 	MS.toast("Duplicated " .. #list .. " object" .. (#list == 1 and "" or "s"))
 end
 
----------------------------------------------------------------------------
--- Triangles: a triangle prism built from box slices so it exports as a
--- normal .tbm and collides correctly in-game (no script needed to play).
----------------------------------------------------------------------------
-
 MS.TRI_PROPS = { color_r = true, color_g = true, color_b = true, color_a = true, mass = true, static = true,
 	hardness = true, friction = true, bounce = true, visible = true }
 
@@ -1763,7 +1646,6 @@ function MS.triCentroid(id)
 	return V.mul(V.add(V.add(t.a, t.b), t.c), 1 / 3)
 end
 
----Returns base start, base end, apex based on which edge should be perfectly flat
 local function triBase(t)
 	local a, b, c = t.a, t.b, t.c
 	local edges = {
@@ -1782,7 +1664,6 @@ local function triBase(t)
 	return e[1], e[2], e[3]
 end
 
----Computes slice transforms: list of { pos, R, dims }
 function MS.triSlices(t)
 	local p0, p1, q = triBase(t)
 	local base = V.sub(p1, p0)
@@ -1809,13 +1690,12 @@ function MS.triSlices(t)
 	return out
 end
 
----(Re)builds the env objects of a triangle to match its definition
 function MS.triBuild(id)
 	local t = MS.tris[id]
 	if (not t) then return end
 	local slices = MS.triSlices(t)
 	local want = #slices
-	-- Create / delete slices to match the wanted count
+
 	while (#t.objs > want and #t.objs > 0) do
 		local idx = table.remove(t.objs)
 		if (MS.meta[idx]) then MS.meta[idx].tri = nil end
@@ -1839,7 +1719,7 @@ function MS.triBuild(id)
 		created = true
 	end
 	local props = t.props
-	-- Slices that only moved / resized can be shown live (see MS.flush)
+
 	local nonLive, touched = false, {}
 	for k, idx in ipairs(t.objs) do
 		local s = slices[k]
@@ -1855,7 +1735,7 @@ function MS.triBuild(id)
 				hardness = props.hardness, friction = props.friction, bounce = props.bounce,
 				mass = (props.mass or 1) / math.max(1, #t.objs)
 			}
-			-- Write without triggering the per-field triangle prop sync
+
 			local o = MS.objs[idx]
 			for _, fname in ipairs(MS.ENV_FIELDS) do
 				local v = f[fname]
@@ -1877,7 +1757,6 @@ function MS.triBuild(id)
 	end
 end
 
----Creates a triangle from three world points. opts: thick, slices, smooth, props, name
 function MS.triCreate(a, b, c, opts)
 	opts = opts or {}
 	local id = MS.nextTri
@@ -1909,15 +1788,15 @@ function MS.addTriangle(kind)
 	local p = MS.spawnPoint()
 	local id
 	if (kind == "ramp") then
-		-- Right-angle wedge: smooth sloped top, 2 wide
+
 		id = MS.triCreate({ p[1] - 1.5, p[2], 0 }, { p[1] + 1.5, p[2], 0 }, { p[1] + 1.5, p[2], 1.2 },
 			{ thick = 2, slices = 20, smooth = "ca", name = "Ramp" })
 	elseif (kind == "flat") then
-		-- Lying flat on the ground (a triangular floor tile)
+
 		id = MS.triCreate({ p[1] - 1, p[2] - 0.8, 0.05 }, { p[1] + 1, p[2] - 0.8, 0.05 }, { p[1], p[2] + 1, 0.05 },
 			{ thick = 0.1, slices = 16, name = "Floor Triangle" })
 	else
-		-- Upright triangle ("fin")
+
 		id = MS.triCreate({ p[1] - 1, p[2], 0 }, { p[1] + 1, p[2], 0 }, { p[1], p[2], 1.6 },
 			{ thick = 0.2, slices = 16 })
 	end
@@ -1928,7 +1807,6 @@ function MS.addTriangle(kind)
 	return id
 end
 
----Turns a triangle into ordinary objects (keeps the slices, drops the link)
 function MS.triDetach(id)
 	local t = MS.tris[id]
 	if (not t) then return end
@@ -1936,7 +1814,7 @@ function MS.triDetach(id)
 	for i, idx in ipairs(t.objs) do
 		MS.meta[idx] = MS.meta[idx] or {}
 		MS.meta[idx].tri = nil
-		-- The first slice takes over the triangle's place in the hierarchy
+
 		MS.meta[idx].parent = t.parent
 		MS.meta[idx].uid = (i == 1) and t.uid or nil
 	end
@@ -1945,11 +1823,6 @@ function MS.triDetach(id)
 	selChanged()
 end
 
----------------------------------------------------------------------------
--- Tools: align / distribute / mirror / drop / snap / arrays / generators
----------------------------------------------------------------------------
-
----Moves the selection without touching rotations
 function MS.translateSelection(d)
 	local tris, plain = (MS.selSplitFamily or MS.selSplit)()
 	for _, idx in ipairs(plain) do
@@ -2020,7 +1893,6 @@ function MS.resetRotation()
 	end
 end
 
----Align all selected objects' centers to the primary object on axis k (1..3)
 function MS.alignSelection(k, mode)
 	local tris, plain = MS.selSplit()
 	if (#plain + MS.count(tris) < 2) then
@@ -2052,7 +1924,6 @@ function MS.alignSelection(k, mode)
 	MS.toast("Aligned on " .. ({ "X", "Y", "Z" })[k])
 end
 
----Evenly spaces plain selected objects between the outermost two along axis k
 function MS.distributeSelection(k)
 	local _, plain = MS.selSplit()
 	if (#plain < 3) then
@@ -2071,8 +1942,6 @@ function MS.distributeSelection(k)
 	MS.toast("Distributed evenly on " .. ({ "X", "Y", "Z" })[k])
 end
 
----Mirrors the selection across the world plane through 0 (or the selection center)
----on axis k. With `copy` the mirrored version is added as new objects.
 function MS.mirrorSelection(k, copy, aroundCenter)
 	local clip = MS.copySelection()
 	if (not clip) then return end
@@ -2084,7 +1953,7 @@ function MS.mirrorSelection(k, copy, aroundCenter)
 		return q
 	end
 	if (not copy) then
-		-- The clip holds the selection and its children: replace all of them
+
 		local tris, plain = (MS.selSplitFamily or MS.selSplit)()
 		local doomed = {}
 		for _, idx in ipairs(plain) do table.insert(doomed, idx) end
@@ -2116,7 +1985,6 @@ function MS.mirrorSelection(k, copy, aroundCenter)
 	MS.toast((copy and "Mirrored copy" or "Mirrored") .. " across " .. ({ "X", "Y", "Z" })[k])
 end
 
----Linear array: `count` extra copies, each offset by `offset`
 function MS.arraySelection(count, offset)
 	local clip = MS.copySelection()
 	if (not clip) then return end
@@ -2135,7 +2003,6 @@ function MS.arraySelection(count, offset)
 	MS.toast("Made " .. count .. " copies")
 end
 
----Radial array around the selection center (or world origin) on the Z axis
 function MS.radialArraySelection(count, radius)
 	local clip = MS.copySelection()
 	if (not clip) then return end
@@ -2276,10 +2143,6 @@ function MS.genPyramid()
 	MS.toast("Stacked " .. #list .. " blocks - they're physical, so they'll tumble!")
 end
 
----------------------------------------------------------------------------
--- Materials
----------------------------------------------------------------------------
-
 MS.MATERIALS = {
 	{ name = "Default", hardness = 0, friction = 0, bounce = 0 },
 	{ name = "Ice", hardness = 0.5, friction = 0.01, bounce = 0 },
@@ -2290,11 +2153,6 @@ MS.MATERIALS = {
 	{ name = "Sticky", hardness = 0.2, friction = 3, bounce = 0 }
 }
 
----------------------------------------------------------------------------
--- Players: mirror, copy, scale
----------------------------------------------------------------------------
-
----Finds the left/right mirror axis + center for a player from the pecs positions
 function MS.playerMirrorAxis(p)
 	local r, l = MS.bodies[p] and MS.bodies[p][5], MS.bodies[p] and MS.bodies[p][8]
 	if (not r or not l) then return 1, 0 end
@@ -2343,7 +2201,7 @@ function MS.mirrorJoint(p, j, silent)
 		MS.jointSet(p, other, f, v)
 	end
 	MS.jointSet(p, other, "pos_" .. AXK[k], 2 * c - src["pos_" .. AXK[k]])
-	-- Rotation axes are pseudo-vectors: reflect, then flip
+
 	local ax = { src.axis_x or 0, src.axis_y or 0, src.axis_z or 0 }
 	ax[k] = -ax[k]
 	ax = V.mul(ax, -1)
@@ -2378,11 +2236,6 @@ function MS.copyJointToOtherPlayers(p, j)
 	end
 end
 
----------------------------------------------------------------------------
--- 360 joints: limits past +-pi are ignored by the physics engine, so a joint
--- with range 10 / -10 keeps turning either way (how the "360 chest" mods work)
----------------------------------------------------------------------------
-
 MS.SPIN_LIMIT = 10
 MS.spinPrev = MS.spinPrev or {}
 
@@ -2392,7 +2245,6 @@ function MS.jointSpins(p, j)
 	return math.abs(o.histop or 0) > math.pi and math.abs(o.lostop or 0) > math.pi
 end
 
----Turns 360 spinning on/off for one joint, remembering its old limits
 function MS.setJointSpin(p, j, on)
 	local o = MS.joints[p] and MS.joints[p][j]
 	if (not o) then return end
@@ -2411,7 +2263,6 @@ function MS.setJointSpin(p, j, on)
 	end
 end
 
----Spin preset for a list of joints on every player. Returns how many joints changed
 function MS.spinJoints(list, on)
 	local n = 0
 	for p = 0, math.max(1, MS.numPlayers) - 1 do
@@ -2427,7 +2278,6 @@ end
 
 MS.CHEST_JOINT, MS.LUMBAR_JOINT = 1, 2
 
----Scales a whole player around the point between its feet (sizes, positions, joint radii)
 function MS.scalePlayer(p, k)
 	if (not MS.bodies[p] or k <= 0) then return end
 	local minZ = math.huge
@@ -2461,10 +2311,6 @@ function MS.scalePlayer(p, k)
 	end
 end
 
----------------------------------------------------------------------------
--- Gamerules
----------------------------------------------------------------------------
-
 MS.RULES = {
 	{ name = "matchframes", title = "Match frames", kind = "int", tip = "How long the whole fight lasts" },
 	{ name = "turnframes", title = "Turn frames", kind = "string", tip = "Frames per turn. Several values separated by commas set a pattern, e.g. 30,20,10" },
@@ -2497,8 +2343,6 @@ MS.RULES = {
 	{ name = "ghostspeed", title = "Ghost speed", kind = "int" }
 }
 
----Game flags: the `flags` gamerule is these bits added together. Each also has
----its own gamerule, which is kept in sync (grip is the inverse of No grip).
 MS.FLAGS = {
 	{ bit = 1, title = "Disqualification (DQ)", rule = "disqualification",
 		desc = "Touching the ground with anything except hands and feet loses the match" },
@@ -2515,7 +2359,6 @@ local function hasBit(n, b)
 end
 MS.hasBit = hasBit
 
----Current flags value, rebuilt from the individual rules if `flags` is missing
 function MS.getFlags()
 	local n = tonumber(MS.getRule("flags") or "")
 	if (n) then return n end
@@ -2548,7 +2391,6 @@ function MS.setFlag(bit, on)
 	MS.setFlags(n)
 end
 
----Human readable summary like "DQ + Dismemberment"
 function MS.flagsSummary(n)
 	local parts = {}
 	for _, f in ipairs(MS.FLAGS) do
@@ -2557,7 +2399,6 @@ function MS.flagsSummary(n)
 	return #parts > 0 and table.concat(parts, " + ") or "None"
 end
 
----Every rule name a snapshot / project keeps
 function MS.allRuleNames()
 	local names = { "flags" }
 	for _, f in ipairs(MS.FLAGS) do table.insert(names, f.rule) end
@@ -2583,8 +2424,6 @@ function MS.applyRules(rules)
 	end
 end
 
----Rules we set that the engine doesn't report back yet (some only take effect on a
----new game): the value we set wins until the engine's own value changes
 MS.ruleShadow = MS.ruleShadow or {}
 
 function MS.getRule(name)
@@ -2620,16 +2459,6 @@ function MS.restartMatch()
 	end
 	MS.toast("Match restarted with the new rules")
 end
-
----------------------------------------------------------------------------
--- Turning a whole player around with the game's per-player start rules
--- (engageplayerpos / engageplayerrot: "x,y,z" for each player, world units / degrees).
--- The engine rotates the player as one piece, so no body part or joint is rewritten.
--- Those rules replace engagedistance / height / rotation, and their exact origin and
--- rotation sign can't be read from the API, so the result is measured after the
--- restart and corrected (rotation first, then position) until the player is where
--- and how it should be.
----------------------------------------------------------------------------
 
 MS.faceFlipped = MS.faceFlipped or {}
 
@@ -2673,22 +2502,19 @@ local function applyFace(f)
 	f.wait = 12
 end
 
----The per-player start rules as lists of {x,y,z} (index 1 = Tori). When they aren't custom
----yet they are initialised from where each player is drawn now (c0 = world centres,
----yaw0 = facing), the same way for every player.
 function MS.startRules(n, c0, yaw0)
 	local V = MS.V
 	local pos = parseTriples(MS.getRule("engageplayerpos"), n)
 	local rot = pos and parseTriples(MS.getRule("engageplayerrot"), n) or nil
 	if (not pos) then
-		-- Not custom yet: start from where each player is drawn now
+
 		pos, rot = {}, {}
 		for i = 0, n - 1 do
 			local W = MS.playerFrame(i)
 			local mc = MS.playerModCenter(i) or { 0, 0, 0 }
 			local o = V.sub(c0[i], MS.M.apply(W, mc))
 			pos[i + 1] = o
-			-- Yaw the mod coordinates are turned by (assumes the engine's +z turns the same way)
+
 			local wr, wl = MS.bodies[i] and MS.bodies[i][5], MS.bodies[i] and MS.bodies[i][8]
 			local ym = (wr and wl) and math.deg(math.atan2(wl.pos_y - wr.pos_y, wl.pos_x - wr.pos_x)) or 0
 			rot[i + 1] = { 0, 0, angDiff(yaw0[i], ym) }
@@ -2699,7 +2525,6 @@ function MS.startRules(n, c0, yaw0)
 	return pos, rot
 end
 
----Starts turning player p around (press again to turn back)
 function MS.faceToggle(p)
 	local n = math.max(2, MS.numPlayers or 2)
 	local f = { p = p, n = n, c0 = {}, yaw0 = {}, tries = 0 }
@@ -2715,7 +2540,7 @@ function MS.faceToggle(p)
 	f.pos, f.rot = pos, rot
 	f.rotBase = {}
 	for i = 1, n do f.rotBase[i] = rot[i][3] end
-	-- Expected result: everybody where and how they were, the chosen player turned 180
+
 	f.want = {}
 	for i = 0, n - 1 do f.want[i] = f.yaw0[i] + (i == p and 180 or 0) end
 	rot[p + 1][3] = rot[p + 1][3] + 180
@@ -2727,10 +2552,6 @@ function MS.faceToggle(p)
 	return true
 end
 
----Moves one whole player by world offset d by changing ONLY that player's entry in
----engageplayerpos (everybody else's values and engageplayerrot stay), then restarts the
----match and lets tickFace measure / correct the result. opts.previewed: the player is
----currently drawn already shifted by d (drag preview). opts.label: undo step name.
 function MS.movePlayerBy(p, d, opts)
 	opts = opts or {}
 	local n = math.max(2, MS.numPlayers or 2)
@@ -2745,7 +2566,7 @@ function MS.movePlayerBy(p, d, opts)
 		end
 		f.want[i] = f.yaw0[i]
 	end
-	-- Where p was before the move (the rules describe the match start, not the preview)
+
 	if (opts.previewed) then f.c0[p] = V.sub(f.c0[p], d) end
 	local pos, rot = MS.startRules(n, f.c0, f.yaw0)
 	if (opts.label) then MS.pushUndo(opts.label) end
@@ -2757,15 +2578,11 @@ function MS.movePlayerBy(p, d, opts)
 	return true
 end
 
----True when the per-player start rules hold custom positions
 function MS.hasCustomPlacement()
 	local n = math.max(2, MS.numPlayers or 2)
 	return parseTriples(MS.getRule("engageplayerpos"), n) ~= nil
 end
 
----Back to the game's own placement (engagedistance / engageheight / engagerotation, default
----facing): both per-player rules are unset ("0" = off, which is what the game's own rule editor
----writes), the turned-around flags are forgotten. restart: start a new match so it shows.
 function MS.clearPlacement(restart)
 	local n = math.max(2, MS.numPlayers or 2)
 	local z = {}
@@ -2777,7 +2594,6 @@ function MS.clearPlacement(restart)
 	if (restart) then MS.restartMatch() end
 end
 
----Where every player is drawn now: centres and yaws, or nil if they can't be read
 function MS.measurePlayers()
 	local n = math.max(2, MS.numPlayers or 2)
 	local m = { c = {}, yaw = {} }
@@ -2789,11 +2605,6 @@ function MS.measurePlayers()
 	return m
 end
 
----Puts only player p back at the game's default place / facing while the other players keep
----their custom start position and rotation. prior = MS.measurePlayers() from before the
----reset. Step A: remember the rules, clear them, restart. Step B (tickFace, phaseA): measure
----the defaults, rebuild the rules from them (p = default, the others = remembered), restart
----and let the normal measure-and-correct loop line everybody up.
 function MS.resetPlayerPlacement(p, prior, doneMsg)
 	local n = math.max(2, MS.numPlayers or 2)
 	local savedPos = parseTriples(MS.getRule("engageplayerpos"), n)
@@ -2818,14 +2629,13 @@ function MS.resetPlayerPlacement(p, prior, doneMsg)
 	f.wait = 12
 end
 
----Per frame: once the restarted match has settled, check the result and correct it
 function MS.tickFace()
 	local f = MS.faceFix
 	if (not f) then return end
 	if (f.wait > 0) then f.wait = f.wait - 1; return end
 	if (MS.needRefresh) then return end
 	if (f.phaseA) then
-		-- The match now starts with no custom rules: these are the default places
+
 		local c, y = {}, {}
 		for i = 0, f.n - 1 do
 			c[i], y[i] = MS.playerWorldCenter(i), yawOf(i)
@@ -2870,13 +2680,13 @@ function MS.tickFace()
 		return
 	end
 	if (worst > 3) then
-		-- Rotation first. Try the error with the assumed sign, then the opposite sign.
+
 		for i = 0, f.n - 1 do
 			if (math.abs(errs[i]) > 3) then
 				f.signTry = f.signTry or {}
 				local last = f.signTry[i]
 				if (last and math.abs(errs[i]) > math.abs(last.err) * 0.5) then
-					-- That direction didn't help: go the other way from the original value
+
 					f.rot[i + 1][3] = last.base + last.err * (last.dir == -1 and 1 or -1)
 					f.signTry[i] = { base = last.base, err = last.err, dir = -last.dir }
 				else
@@ -2892,10 +2702,6 @@ function MS.tickFace()
 	end
 	applyFace(f)
 end
-
----------------------------------------------------------------------------
--- Project files (keeps names, groups, locks, parents and triangles - .tbm can't)
----------------------------------------------------------------------------
 
 function MS.safeName(name)
 	name = tostring(name or ""):gsub("[^%w%-_ ]", ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -2991,7 +2797,7 @@ function MS.exportMod(name)
 	if (ok and written) then
 		MS.saveName = (tostring(written):gsub("^modmaker/", ""):gsub("%.tbm$", ""))
 		MS.markClean()
-		-- Keep a project file next to the export so names/triangles survive
+
 		MS.saveProject(MS.saveName, true)
 		MS.lastExport = tostring(written)
 		local extra = MS.afterExport and MS.afterExport(written) or ""
@@ -3009,7 +2815,7 @@ function MS.importMod(name)
 	if (ok and res) then
 		MS.meta, MS.tris = {}, {}
 		MS.reloadAll()
-		-- Per-object models live only in the file (the mod maker API can't see them)
+
 		local nm = MS.readModelLines and MS.readModelLines(name) or 0
 		if (nm > 0) then
 			MS.toast("Imported " .. name .. " - " .. nm .. " object" .. (nm == 1 and "" or "s") .. " use 3D models")
@@ -3023,11 +2829,6 @@ function MS.importMod(name)
 	MS.toast("Couldn't import " .. name)
 	return false
 end
-
----------------------------------------------------------------------------
--- Calibration: spawn a hidden probe box with a known raw rotation/size, read
--- back the orientation the engine actually built, and pick the matching units.
----------------------------------------------------------------------------
 
 local PROBE_POS = { 321.5, -287.25, 55.5 }
 local PROBE_ROT = { 40, 25, 10 }
@@ -3055,7 +2856,6 @@ local function readRotTable(i)
 	}
 end
 
----Rotation of a live game object as a 3x3 matrix (nil when the game won't say). Models use it in test mode.
 MS.readEngineRot = readRotTable
 
 local function matErr(a, b)
@@ -3083,7 +2883,7 @@ local function finishCalibration(result)
 	MS.settings.sizeScale = result.sizeScale or MS.settings.sizeScale
 	MS.saveSettings()
 	if (changed) then
-		-- Re-read everything in the right units and rebuild triangles with them
+
 		MS.reloadAll()
 		for id in pairs(MS.tris) do MS.triBuild(id) end
 		MS.flush(true)
@@ -3096,7 +2896,6 @@ function MS.startCalibration()
 	MS.calib = { frames = 0 }
 end
 
----Advances calibration by one frame. Call from draw3d until MS.calib.done.
 function MS.calibrateStep()
 	local c = MS.calib
 	if (not c or c.done) then return end
@@ -3119,7 +2918,6 @@ function MS.calibrateStep()
 		return
 	end
 
-	-- Find the probe among the world's objects by its position
 	local found
 	local n = MS.count(MS.objs) + 6
 	for i = 0, n do
@@ -3152,7 +2950,7 @@ function MS.calibrateStep()
 		finishCalibration(nil)
 		return
 	end
-	-- Size: world sides vs the raw dims we wrote
+
 	local oks, sx, sy, sz = pcall(get_obj_sides, found)
 	if (oks and type(sx) == "number" and sx > 0 and sy and sz) then
 		local k = PROBE_DIMS[1] / sx
@@ -3165,20 +2963,12 @@ function MS.calibrateStep()
 	finishCalibration(best)
 end
 
----------------------------------------------------------------------------
--- Reset to the default mod (what the classic editor's "Reset Everything" does)
----------------------------------------------------------------------------
-
 MS.DEFAULT_MOD = "classic.tbm"
 
 local RESET_LABELS = {
 	all = "Reset everything", players = "Reset both players", rules = "Reset rules", [0] = "Reset Tori", [1] = "Reset Uke"
 }
 
----Starts the mod maker over from a freshly loaded classic mod: no objects, classic fighters
----(extra limbs gone), every rule back to the game's default. import_mod_into_maker alone only
----overwrites what the file lists, so rules, fighters and limbs classic.tbm leaves out survived it.
----Things to run a few frames from now (Mod Studio's tick runs them)
 MS.frameJobs = MS.frameJobs or {}
 function MS.afterFrames(n, fn)
 	table.insert(MS.frameJobs, { n = n, fn = fn })
@@ -3195,10 +2985,6 @@ function MS.runFrameJobs()
 	end
 end
 
----Starts the mod maker over from a freshly loaded classic mod (the game's default rules, no
----objects, no extra limbs), then calls onDone(ok). The game queues "lm" and runs it a frame
----or so later, so this waits for it: entering straight away let the late load overwrite
----everything written afterwards.
 function MS.freshModMaker(onDone)
 	if (type(runCmd) ~= "function" or type(enter_mod_maker_mode) ~= "function") then
 		onDone(false)
@@ -3220,9 +3006,6 @@ function MS.freshModMaker(onDone)
 	end)
 end
 
----The classic fighter, captured from an untouched game (raw engine values, modstudio/classic_fighter.lua).
----Loading any mod copies the game's built-in fighter, and edits can end up in that built-in copy,
----so a reset writes these values instead of trusting the load.
 function MS.classicFighter()
 	if (MS.CLASSIC_FIGHTER == nil) then
 		local ok, t = pcall(dofile, "modstudio/classic_fighter.lua")
@@ -3231,7 +3014,6 @@ function MS.classicFighter()
 	return MS.CLASSIC_FIGHTER or nil
 end
 
----Writes the classic fighter into player `which` ("all" / "players": every player). Returns true if it did.
 function MS.writeClassicFighters(which)
 	local t = MS.classicFighter()
 	if (not t) then return false end
@@ -3241,7 +3023,7 @@ function MS.writeClassicFighters(which)
 		if (which == "all" or which == "players" or which == p) then
 			local d = t[p] or t[p % 2] or t[0]
 			for b, fields in pairs(d.bodies or {}) do
-				-- Shape first: it decides how the sizes are read
+
 				if (fields.type ~= nil) then pcall(set_mod_body, p, b, "type", fields.type) end
 				for f, v in pairs(fields) do
 					if (f ~= "type") then pcall(set_mod_body, p, b, f, v) end
@@ -3256,7 +3038,6 @@ function MS.writeClassicFighters(which)
 	return true
 end
 
----True if player p's fighter (classic parts) has the classic values
 local function isClassic(p)
 	local t = MS.classicFighter()
 	local d = t and (t[p] or t[p % 2] or t[0])
@@ -3276,11 +3057,9 @@ local function isClassic(p)
 	return true
 end
 
----The game's classic load can land again a moment after the reset (the new match copies its
----built-in fighter, which edits may have overwritten). For a few seconds, put classic back if so.
 function MS.guardClassicFighters(which)
 	local checks = 0
-	-- Anything you do after the reset (an edit, undo / redo) ends the watch
+
 	local function mark() return #MS.undoStack .. ":" .. #MS.redoStack .. ":" .. tostring(MS.lastEditClock) end
 	local start
 	local function check()
@@ -3307,21 +3086,18 @@ function MS.guardClassicFighters(which)
 	MS.afterFrames(2, check)
 end
 
----what: "all" | "players" | "rules" | player index. Finishes a few frames later (the game
----loads classic first); onDone(ok) runs then.
 function MS.resetTo(what, onDone)
 	if (MS.resetting) then return false end
 	local label = RESET_LABELS[what] or "Reset"
 	local keep = MS.snapshot()
-	-- Whole-player placement lives in rules (engageplayerpos / engageplayerrot): note where
-	-- everybody is drawn now, so a single-player reset can leave the others exactly there
+
 	local hadPlacement = MS.hasCustomPlacement()
 	local prior = (type(what) == "number" and hadPlacement) and MS.measurePlayers() or nil
 	MS.faceFix = nil
 	local okm, msg = pcall(get_mod_message)
 	local oku, um = pcall(get_mod_use_model)
 	local okn, mn = pcall(get_mod_model_name)
-	-- Inside MS.withUndo the caller already recorded the undo step
+
 	local pushed = not MS.undoSuppress
 	MS.pushUndo(label)
 	MS.endDragSilently()
@@ -3330,7 +3106,7 @@ function MS.resetTo(what, onDone)
 	MS.freshModMaker(function(fresh)
 	local ok, res = pcall(import_mod_into_maker, MS.DEFAULT_MOD)
 	if (not fresh or not ok or not res) then
-		-- The import may have half-run: re-read the engine, then put everything back
+
 		if (pushed) then table.remove(MS.undoStack) end
 		MS.reloadAll()
 		MS.restore(keep)
@@ -3345,12 +3121,12 @@ function MS.resetTo(what, onDone)
 	MS.meta, MS.tris = {}, {}
 	MS.reloadAll()
 	if (what == "all") then
-		-- A blank classic mod: new exports start as "Untitled" again
+
 		MS.saveName = "Untitled"
 		MS.faceFlipped = {}
 	end
 	if (what ~= "all") then
-		-- Put back everything that isn't being reset
+
 		local s = MS.deepcopy(keep)
 		if (what == "players") then
 			s.bodies, s.joints = nil, nil
@@ -3367,13 +3143,13 @@ function MS.resetTo(what, onDone)
 	end
 	MS.markDirty()
 	MS.selClear()
-	-- Default position + facing (the game's own placement when the start rules are unset)
+
 	local who = label:gsub("^Reset ", "")
 	local toastMsg = label .. " done - Ctrl+Z undoes it"
 	if (type(what) == "number") then
 		toastMsg = who .. " reset to the default position - Ctrl+Z undoes it"
 		if (hadPlacement) then
-			-- The others keep their custom place: async measure-and-correct, toast when settled
+
 			MS.resetPlayerPlacement(what, prior, who .. " reset to the default position")
 			toastMsg = nil
 		else

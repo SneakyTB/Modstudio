@@ -1,17 +1,10 @@
--- Mod Studio: extra tools
--- Surface snapping, measuring, whole-player placement, dojo, arc/curve
--- generators, prefab library and trigger/physics presets.
+
 
 local MS = MS
 local V, M = MS.V, MS.M
 local abs, sqrt, floor = math.abs, math.sqrt, math.floor
 local rad, deg, sin, cos = math.rad, math.deg, math.sin, math.cos
 
----------------------------------------------------------------------------
--- Scene raycasting with surface normals (uses the cached objects)
----------------------------------------------------------------------------
-
----Ray vs oriented box. Returns t, world normal
 local function rayOBBn(ro, rd, pos, R, half)
 	local Rt = M.transpose(R)
 	local o = M.apply(Rt, V.sub(ro, pos))
@@ -44,9 +37,8 @@ local function raySphereN(ro, rd, c, r)
 	return t, V.norm(V.sub(V.add(ro, V.mul(rd, t)), c))
 end
 
----Ray vs capsule along local Z
 local function rayCapsuleN(ro, rd, pos, R, r, len)
-	-- Test the bounding box first, then treat the surface as the capsule
+
 	local t = rayOBBn(ro, rd, pos, R, { r, r, len / 2 + r })
 	if (not t) then return nil end
 	local a = M.col(R, 3)
@@ -58,7 +50,7 @@ local function rayCapsuleN(ro, rd, pos, R, r, len)
 		if (ts and (not best or ts < best[1])) then best = { ts, n } end
 	end
 	if (best) then
-		-- Normal points away from the core line
+
 		local hit = V.add(ro, V.mul(rd, best[1]))
 		local s = MS.clamp(V.dot(V.sub(hit, p0), a), 0, len)
 		return best[1], V.norm(V.sub(hit, V.add(p0, V.mul(a, s))))
@@ -66,8 +58,6 @@ local function rayCapsuleN(ro, rd, pos, R, r, len)
 	return nil
 end
 
----Nearest surface along the ray among objects (not in `exclude`) and the ground.
----Returns { t, pos, normal, idx (nil = ground) } or nil
 function MS.raycastScene(ro, rd, exclude)
 	exclude = exclude or {}
 	local best
@@ -87,7 +77,7 @@ function MS.raycastScene(ro, rd, exclude)
 			end
 		end
 	end
-	-- The floor
+
 	if (rd[3] < -1e-4) then
 		local t = -ro[3] / rd[3]
 		if (t > 0 and (not best or t < best.t)) then
@@ -100,13 +90,8 @@ function MS.raycastScene(ro, rd, exclude)
 	return best
 end
 
----------------------------------------------------------------------------
--- Measuring
----------------------------------------------------------------------------
-
 MS.measure = MS.measure or {}
 
----Point on whatever surface is under the cursor (objects or floor)
 function MS.surfacePoint(x, y)
 	local ro, rd = MS.mouseRay(x, y)
 	if (not ro) then return nil end
@@ -135,7 +120,6 @@ function MS.measureClick(x, y)
 	end
 end
 
----Distance between the two selected objects' centers, or nil
 function MS.selectionDistance()
 	local tris, plain = MS.selSplit()
 	if (#plain == 2 and next(tris) == nil) then
@@ -144,11 +128,6 @@ function MS.selectionDistance()
 	return nil
 end
 
----------------------------------------------------------------------------
--- Whole-player placement + dojo
----------------------------------------------------------------------------
-
----Average drawn position of a player's body parts
 function MS.playerWorldCenter(p)
 	local sum, n = { 0, 0, 0 }, 0
 	for b = 0, MS.numBodies(p) - 1 do
@@ -169,7 +148,6 @@ function MS.playerModCenter(p)
 	return V.mul(sum, 1 / n)
 end
 
----Dojo center on the floor: halfway between the players as the game draws them
 function MS.dojoCenter()
 	local a, b = MS.playerWorldCenter(0), MS.playerWorldCenter(1)
 	if (a and b) then return { (a[1] + b[1]) / 2, (a[2] + b[2]) / 2, 0 } end
@@ -177,12 +155,11 @@ function MS.dojoCenter()
 	return { 1, -0.1, 0 }
 end
 
----Dojo half-width (square) or radius (round) in world units, type, raw size
 function MS.dojoShape()
 	local size = tonumber(MS.getRule("dojosize") or "") or 0
 	local kind = tonumber(MS.getRule("dojotype") or "") or 0
 	if (size <= 0) then return nil end
-	-- Square: size is the full width. Round: size is the radius. Both in 1/100 units.
+
 	local r = kind == 1 and size / 100 or size / 200
 	return r, kind, size
 end
@@ -194,17 +171,11 @@ function MS.setDojoFromRadius(r)
 	MS.setRule("dojosize", math.max(0, floor(size + 0.5)))
 end
 
----------------------------------------------------------------------------
--- Arc / curve generators
----------------------------------------------------------------------------
-
 MS.arcGen = MS.arcGen or {
 	kind = "arch", radius = 2, thick = 0.25, width = 2, segments = 12, span = 180,
 	spiralSteps = 12, spiralRise = 0.25, spiralTurns = 1
 }
 
----Builds boxes along an arc. Frames: r (radial), t (tangent), a = r x t.
----`pointAt(theta)` returns center, radial, tangent (all unit except center).
 local function buildArc(name, segs, span, radius, thick, width, startAngle, frame, color, group)
 	local list = {}
 	local dTheta = span / segs
@@ -245,7 +216,7 @@ function MS.genArc(kind)
 	MS.pushUndo("Build " .. kind)
 	local list
 	if (kind == "arch") then
-		-- Vertical half circle over the spawn point, walkway along Y
+
 		local base = { p[1], p[2], 0 }
 		list = buildArc("Arch", segs, g.span, R, T, W, 0, function(th)
 			local r = { cos(rad(th)), 0, sin(rad(th)) }
@@ -253,7 +224,7 @@ function MS.genArc(kind)
 			return base, r, t
 		end, c, "Arch")
 	elseif (kind == "quarterpipe") then
-		-- Curved ramp: floor curving up into a wall (inside surface)
+
 		local center = { p[1], p[2], R + T }
 		list = buildArc("Quarter pipe", segs, 90, R, T, W, -90, function(th)
 			local r = { cos(rad(th)), 0, sin(rad(th)) }
@@ -268,7 +239,7 @@ function MS.genArc(kind)
 			return center, r, t
 		end, c, "Tunnel")
 	elseif (kind == "curvedwall") then
-		-- Wall bending around the vertical axis (good for round arenas)
+
 		local center = { p[1], p[2], W / 2 }
 		list = buildArc("Curved wall", segs, g.span, R, T, W, 0, function(th)
 			local r = { cos(rad(th)), sin(rad(th)), 0 }
@@ -310,13 +281,8 @@ function MS.genArc(kind)
 	return list
 end
 
----------------------------------------------------------------------------
--- Prefab library (saved in data/script/modstudio/prefabs/*.msf)
----------------------------------------------------------------------------
-
 MS.PREFAB_DIR = "modstudio/prefabs/"
 
----Copies the selection with positions relative to its bottom-center
 function MS.selectionAsPrefab()
 	local clip = MS.copySelection()
 	if (not clip) then return nil end
@@ -369,7 +335,7 @@ function MS.listPrefabs()
 		for _, v in pairs(files) do
 			if (type(v) == "string" and v:match("%.msf$")) then
 				local name = v:gsub("%.msf$", "")
-				-- Deleted prefabs are emptied files (scripts can't delete files)
+
 				if (MS.readData(MS.PREFAB_DIR .. name .. ".msf")) then table.insert(list, name) end
 			end
 		end
@@ -383,7 +349,6 @@ function MS.deletePrefabFile(name)
 	MS.toast("Deleted prefab \"" .. name .. "\"")
 end
 
----Built-in starter prefabs (positions relative to bottom-center)
 local function box(x, y, z, sx, sy, sz, col, extra)
 	local f = { type = 1, pos_x = x, pos_y = y, pos_z = z, dims_x = sx, dims_y = sy, dims_z = sz, rot_x = 0, rot_y = 0, rot_z = 0,
 		color_r = col[1], color_g = col[2], color_b = col[3], color_a = 1, static = true, visible = true, mass = 1 }
@@ -419,7 +384,6 @@ function MS.loadPrefab(name)
 	return nil
 end
 
----Places a prefab where the camera is looking (or at `at`)
 function MS.placePrefab(name, at)
 	local clip = MS.loadPrefab(name)
 	if (not clip) then
@@ -433,10 +397,6 @@ function MS.placePrefab(name, at)
 	return list
 end
 
----------------------------------------------------------------------------
--- Presets: physics surfaces (reliable) and touch triggers (experimental)
----------------------------------------------------------------------------
-
 MS.SURFACE_PRESETS = {
 	{ name = "Bounce pad", tip = "Launches whatever lands on it", fields = { bounce = 1, hardness = 0.2, friction = 0.6, static = true }, color = { 0.2, 0.85, 0.4 } },
 	{ name = "Ice", tip = "Almost no grip", fields = { friction = 0.01, hardness = 0.5, bounce = 0, static = true }, color = { 0.75, 0.9, 1 } },
@@ -445,8 +405,6 @@ MS.SURFACE_PRESETS = {
 	{ name = "Ghost wall", tip = "Invisible but solid", fields = { visible = false, static = true, color_a = 0.3 }, color = nil }
 }
 
--- Touch triggers fire when something whose Group (trig_id) bits overlap this
--- object's Collide-with (trig_mask) bits touches it. Players need a group too.
 MS.TRIGGER_PRESETS = {
 	{ name = "Score pad +100", tip = "Gives points when a player touches it (once)", score = 100, once = true, color = { 0.2, 0.9, 0.3, 1 } },
 	{ name = "Penalty zone -100", tip = "Takes points when a player touches it", score = -100, once = false, color = { 0.95, 0.2, 0.2, 1 } },
@@ -472,8 +430,6 @@ function MS.applySurfacePreset(i)
 	MS.toast(pr.name .. " applied to " .. #list .. " object" .. (#list == 1 and "" or "s"))
 end
 
----Puts every body part of each player into its own trigger group (Tori 1, Uke 2)
----if they don't have one yet. Returns how many parts changed.
 function MS.ensurePlayerTriggerGroups()
 	local changed = 0
 	for p = 0, math.max(1, MS.numPlayers) - 1 do
@@ -512,17 +468,10 @@ function MS.applyTriggerPreset(i)
 	MS.toast(pr.name .. " set up" .. (groups > 0 and " (players were given trigger groups)" or "") .. " - try it with Test")
 end
 
----------------------------------------------------------------------------
--- Moving obstacles: physics objects hinged to a fixed anchor with links.
--- Hinge limits beyond +-pi are ignored by the physics engine, so +-10 means
--- "spins forever". maxvelocity is the motor speed, maxforce its strength.
----------------------------------------------------------------------------
-
 MS.moverGen = MS.moverGen or { size = 1, speed = 4, strength = 800 }
 
-local FREE = 10 -- hinge limit that means "no limit"
+local FREE = 10
 
----Hinges b to a at `pos` around `axis`. o: lo, hi, force, speed
 local function hinge(a, b, pos, axis, o)
 	if (not a or not b) then return nil end
 	o = o or {}
@@ -575,7 +524,7 @@ MS.MOVERS = {
 			local arm = piece(col(METAL, { pos_x = p[1], pos_y = p[2], pos_z = H - 1.1 * s, dims_x = 0.15 * s, dims_y = 0.15 * s, dims_z = 2.2 * s, mass = s }), "Hammer arm", "Hammer")
 			local head = piece(col(RED, { pos_x = p[1], pos_y = p[2], pos_z = H - 2.4 * s, dims_x = 1.2 * s, dims_y = 0.6 * s, dims_z = 0.6 * s, mass = 6 * s,
 				force_x = 40 * s }), "Hammer head", "Hammer")
-			-- Free swing on the beam, head locked to the arm
+
 			hinge(beam, arm, { p[1], p[2], H }, { 0, 1, 0 }, { force = 0 })
 			hinge(arm, head, { p[1], p[2], H - 2.2 * s }, { 0, 1, 0 }, { lo = 0, hi = 0, force = 100000 })
 			return { beam, l, r, arm, head }
@@ -626,10 +575,6 @@ function MS.genMover(id)
 	MS.toast("Built a " .. def.name .. " - press Test to watch it move")
 	return list
 end
-
----------------------------------------------------------------------------
--- Mod templates: start a new mod with objects AND rules set up
----------------------------------------------------------------------------
 
 local function floorTile(c, sx, sy, color, name, z)
 	return MS.createObj({ type = 1, pos_x = c[1], pos_y = c[2], pos_z = (z or 0) + 0.05, dims_x = sx, dims_y = sy, dims_z = 0.1,
@@ -718,11 +663,6 @@ MS.TEMPLATES = {
 		end }
 }
 
----Feature showcase: one of everything, laid out around the players.
----  ahead: arch over a walkway, score pad, stairs + bridge
----  right: ramp + upright triangle, ice patch, pyramid of physics blocks
----  left:  spinner, see-saw, swinging door, wrecking ball, bounce pad
----  behind: spiral stairs, doorway prefab
 local function buildShowcase(c)
 	local fwd, right = { 0, 1, 0 }, { 1, 0, 0 }
 	if (MS.toriAxes) then fwd, right = MS.toriAxes() end
@@ -737,7 +677,6 @@ local function buildShowcase(c)
 		end
 	end
 
-	-- Ahead: arch over a walkway, with a score pad past it
 	local g = MS.arcGen
 	local saved = MS.deepcopy(g)
 	g.radius, g.thick, g.width, g.segments, g.span = 1.6, 0.2, 1.6, 10, 180
@@ -749,7 +688,7 @@ local function buildShowcase(c)
 		MS.sel = { [scorePad] = true }
 		MS.applyTriggerPreset(1)
 	end
-	-- Stairs up to a bridge
+
 	local gen = MS.gen
 	local oldSteps, oldRise, oldRun, oldW = gen.stairsSteps, gen.stairsRise, gen.stairsRun, gen.stairsWidth
 	gen.stairsSteps, gen.stairsRise, gen.stairsRun, gen.stairsWidth = 5, 0.3, 0.4, 1.6
@@ -758,7 +697,6 @@ local function buildShowcase(c)
 	gen.stairsSteps, gen.stairsRise, gen.stairsRun, gen.stairsWidth = oldSteps, oldRise, oldRun, oldW
 	name(MS.placePrefab("Bridge", P(11, 6)), "Showcase: prefabs")
 
-	-- Right: triangles, ice, physics pyramid
 	local rp = P(0, 7)
 	MS.triCreate({ rp[1] - 1.5, rp[2], 0 }, { rp[1] + 1.5, rp[2], 0 }, { rp[1] + 1.5, rp[2], 1.2 },
 		{ thick = 2, slices = 10, smooth = "ca", name = "Ramp (triangle)" })
@@ -775,7 +713,6 @@ local function buildShowcase(c)
 	name(MS.selList(), "Showcase: physics")
 	gen.pyramidLevels = oldLevels
 
-	-- Left: moving obstacles
 	local mg = MS.moverGen
 	local oldSize = mg.size
 	mg.size = 1
@@ -790,7 +727,6 @@ local function buildShowcase(c)
 	mg.size = oldSize
 	name(MS.placePrefab("Bounce pad", P(4, -3.5)), "Showcase: surfaces")
 
-	-- Behind: spiral stairs and a doorway
 	g.spiralSteps, g.spiralTurns, g.spiralRise, g.radius = 10, 1, 0.25, 1.4
 	spawnAt(-8, 0)
 	name(MS.genArc("spiral"), "Showcase: curves")
@@ -810,13 +746,11 @@ table.insert(MS.TEMPLATES, 1, {
 	build = buildShowcase
 })
 
----Replaces the whole mod with a template. One Ctrl+Z puts the old mod back.
 function MS.applyTemplate(id)
 	local t
 	for _, tt in ipairs(MS.TEMPLATES) do if (tt.id == id) then t = tt end end
 	if (not t) then return false end
-	-- One undo step for the reset + the build. The reset finishes a few frames later (the game
-	-- loads classic first), so the template is built when it's done.
+
 	MS.pushUndo("Template: " .. t.name)
 	local was = MS.undoSuppress
 	MS.undoSuppress = true
@@ -847,15 +781,10 @@ function MS.applyTemplate(id)
 	return started
 end
 
----------------------------------------------------------------------------
--- Object saver: merge boxes that line up into one, and thin out triangles
----------------------------------------------------------------------------
-
 local MERGE_EPS = 0.002
--- Geometry is merged; everything else must match exactly
+
 local MERGE_SKIP = { pos_x = true, pos_y = true, pos_z = true, dims_x = true, dims_y = true, dims_z = true, mass = true }
 
----Why a box can't take part in merging (nil = it can)
 local function mergeBlocker(idx, H, linked)
 	local o, m = MS.objs[idx], MS.meta[idx]
 	if (o.type ~= 1) then return "shape" end
@@ -881,8 +810,6 @@ local function mergeSignature(o)
 	return table.concat(parts, ";")
 end
 
----Can boxes a and b (same rotation R) become one box? Returns the merged
----{ pos, dims } or nil.
 local function mergePair(R, a, b)
 	local d = V.sub(b.pos, a.pos)
 	local along
@@ -893,10 +820,10 @@ local function mergePair(R, a, b)
 			along = k
 		end
 	end
-	if (not along) then along = 1 end -- exact twins: keep one
+	if (not along) then along = 1 end
 	local u = M.col(R, along)
 	local c = V.dot(d, u)
-	-- Must touch or overlap so the union is still a solid box
+
 	if (abs(c) > (a.dims[along] + b.dims[along]) / 2 + MERGE_EPS) then return nil end
 	for k = 1, 3 do
 		if (k ~= along and (abs(V.dot(d, M.col(R, k))) > MERGE_EPS or abs(a.dims[k] - b.dims[k]) > MERGE_EPS)) then return nil end
@@ -908,8 +835,6 @@ local function mergePair(R, a, b)
 	return { pos = V.add(a.pos, V.mul(u, (lo + hi) / 2)), dims = dims }
 end
 
----Works out what the object saver would do, without changing anything.
----triTarget: lower every triangle with more slices than this (nil = leave them)
 function MS.planObjectSaver(triTarget)
 	local H = MS.hier()
 	local linked = {}
@@ -934,7 +859,7 @@ function MS.planObjectSaver(triTarget)
 	for _, list in pairs(buckets) do
 		if (#list > 1) then
 			local R = MS.objRot(list[1].idx)
-			-- Keep joining pairs until nothing in this bucket lines up any more
+
 			local changed = true
 			while (changed) do
 				changed = false
@@ -979,7 +904,6 @@ function MS.planObjectSaver(triTarget)
 		total = removed + triSaved, skipped = skipped }
 end
 
----Does what planObjectSaver(triTarget) describes, as one undo step
 function MS.applyObjectSaver(plan)
 	if (not plan or plan.total == 0) then
 		MS.toast("Nothing to save - every box is already as big as it can be")
@@ -1016,13 +940,8 @@ function MS.applyObjectSaver(plan)
 	return saved
 end
 
----------------------------------------------------------------------------
--- Check before export: things that are probably mistakes
----------------------------------------------------------------------------
-
 local FAR = 60
 
----Is world point p inside object idx's box (grown by `pad`)?
 local function insideObj(idx, p, pad)
 	local o = MS.objs[idx]
 	local rel = V.sub(p, MS.objPos(idx))
@@ -1035,7 +954,6 @@ local function insideObj(idx, p, pad)
 	return true
 end
 
----List of { severity = "warn" | "info", text, objs = { idx... } }, worst first
 function MS.checkMod()
 	local issues = {}
 	local function add(sev, text, objs)
@@ -1043,7 +961,6 @@ function MS.checkMod()
 	end
 	local all = MS.sortedKeys(MS.objs)
 
-	-- Inside a player at the start
 	local bodies = {}
 	if (MS.bodyWorld) then
 		for p = 0, math.max(1, MS.numPlayers or 2) - 1 do
@@ -1067,7 +984,6 @@ function MS.checkMod()
 	end
 	add("warn", "inside a player at the start - they'll be stuck or thrown around", inPlayer)
 
-	-- Under the floor / far away
 	local under, far = {}, {}
 	for _, idx in ipairs(all) do
 		local p = MS.objPos(idx)
@@ -1078,7 +994,6 @@ function MS.checkMod()
 	add("warn", "completely under the floor - nobody will ever see or touch them", under)
 	add("warn", "more than " .. FAR .. " away from the middle of the arena", far)
 
-	-- Stacked twins
 	local seen, twins = {}, {}
 	for _, idx in ipairs(all) do
 		local o = MS.objs[idx]
@@ -1088,7 +1003,6 @@ function MS.checkMod()
 	end
 	add("warn", "exact copies sitting on top of another object (the extra copies are selected)", twins)
 
-	-- Tiny and see-through
 	local tiny, clear, invisible = {}, {}, {}
 	for _, idx in ipairs(all) do
 		local o, e = MS.objs[idx], MS.objExtents(idx)
@@ -1100,12 +1014,10 @@ function MS.checkMod()
 	add("info", "fully see-through (colour alpha 0) but still solid", clear)
 	add("info", "invisible (still solid - fine for invisible walls)", invisible)
 
-	-- 3D model files and textures (models.lua)
 	if (MS.assetIssues) then
 		for _, it in ipairs(MS.assetIssues(false)) do table.insert(issues, it) end
 	end
 
-	-- Object budget
 	local limit = MS.settings.objLimit or 0
 	local n = #all
 	if (limit > 0 and n > limit) then
@@ -1120,7 +1032,6 @@ function MS.checkMod()
 	return issues
 end
 
----Selects the objects of one check result and points the camera at them
 function MS.selectIssue(issue)
 	if (not issue or #issue.objs == 0) then return end
 	MS.selClear()
@@ -1131,7 +1042,6 @@ function MS.selectIssue(issue)
 	MS.toast("Selected " .. #issue.objs .. " object" .. (#issue.objs == 1 and "" or "s"))
 end
 
----Export, but first show any warnings from the check
 function MS.exportChecked(name)
 	if (MS.assetReport) then pcall(MS.assetReport, true) end
 	local warns, firstWarn = 0, nil
@@ -1148,7 +1058,7 @@ function MS.exportChecked(name)
 		"The mod check found things that are probably mistakes. Have a look, or export anyway.", {
 			{ "Show me", function()
 				MS.UI.selectTab("stats")
-				-- The check sits low on the Stats tab, so also select and frame what the first warning is about
+
 				MS.selectIssue(firstWarn)
 			end },
 			{ "Export anyway", function() MS.exportMod(name) end },

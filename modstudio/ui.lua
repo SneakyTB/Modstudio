@@ -1,6 +1,4 @@
--- Mod Studio: interface
--- Main panel (tabs), top toolbar, status bar with hints, help overlay and dialogs.
--- Built on the game's own toriui so it looks and behaves like the stock menus.
+
 
 local MS = MS
 local V = MS.V
@@ -13,14 +11,11 @@ UI.sub = UI.sub or { objects = "transform", players = "transform", joints = "mai
 UI.pages = UI.pages or {}
 UI.fileMode = "main"
 UI.filter = UI.filter or ""
-UI.collapsed = UI.collapsed or {}   -- uid -> true for folded branches in the Scene list
+UI.collapsed = UI.collapsed or {}
 
--- Sizes are set by UI.applyTheme() from the "UI size" setting
 local ROW, GAP, PAD = 20, 2, 4
 UI.k, UI.textK, UI.HEADER_H = 1, 0.94, 26
 
--- Colors: Toribash's own menu reds, a shade darker for a dense editor look.
--- Filled in place by UI.applyTheme() so every widget picks up changes.
 local C = { clear = { 0, 0, 0, 0 }, shade = { 0, 0, 0, 0.18 },
 	axis = { { 0.85, 0.25, 0.25, 1 }, { 0.3, 0.65, 0.25, 1 }, { 0.25, 0.45, 0.9, 1 } } }
 UI.C = C
@@ -35,7 +30,6 @@ UI.ACCENTS = {
 	{ "custom", "Custom", { 0.9, 0.62, 0.62, 1 } }
 }
 
--- Main panel colour. nil = the game's own menu reds; "custom" uses settings.themeCustom
 UI.THEMES = {
 	{ "toribash", "Toribash" },
 	{ "charcoal", "Charcoal", { 0.25, 0.25, 0.27 } },
@@ -45,15 +39,11 @@ UI.THEMES = {
 	{ "custom", "Custom" }
 }
 
----Square corners setting: every rounded shape asks here for its radius.
----Square gives nil, so toriui skips the ROUNDED shape and draws a plain box: radius 0
----still drew through the rounded path (corner disks), which kept corners from looking square.
 function UI.r(n)
 	if (MS.settings and MS.settings.squareCorners) then return nil end
 	return n
 end
 
----A { r, g, b } colour from settings, or the fallback when it's missing / broken
 local function rgbSetting(c, fallback)
 	if (type(c) ~= "table" or type(c[1]) ~= "number") then return fallback end
 	return { MS.clamp(c[1], 0, 1), MS.clamp(c[2] or 0, 0, 1), MS.clamp(c[3] or 0, 0, 1), 1 }
@@ -84,7 +74,7 @@ function UI.applyTheme()
 	end
 	if (st.theme == "custom") then base = rgbSetting(st.themeCustom, { 0.4, 0.4, 0.45, 1 }) end
 	if (base) then
-		-- Same steps between shades as the game's reds
+
 		bg = { base[1], base[2], base[3], 1 }
 		darker = shadeOf(base, 0.9)
 		darkest = shadeOf(base, 0.82)
@@ -95,22 +85,17 @@ function UI.applyTheme()
 		if (a[1] == st.accent) then accent = a[3] end
 	end
 	if (st.accent == "custom") then accent = rgbSetting(st.accentCustom, accent) end
-	C.bg = shadeOf(darker, 0.8)        -- panel body
-	C.dark = shadeOf(bg, 0.92)         -- buttons
-	C.darkest = shadeOf(darkest, 0.62) -- fields, section bars, panel edges, top bar
-	C.light = shadeOf(lighter, 1)      -- hover
-	C.lightest = { accent[1], accent[2], accent[3], 1 } -- active / selected
+	C.bg = shadeOf(darker, 0.8)
+	C.dark = shadeOf(bg, 0.92)
+	C.darkest = shadeOf(darkest, 0.62)
+	C.light = shadeOf(lighter, 1)
+	C.lightest = { accent[1], accent[2], accent[3], 1 }
 	C.edge = shadeOf(darkest, 0.4)
-	-- See-through panels: only the panel body and its edge, so buttons stay readable
+
 	local op = MS.clamp(tonumber(st.panelOpacity) or 1, 0.3, 1)
 	C.bg[4], C.edge[4] = op, op
 end
 
----------------------------------------------------------------------------
--- Small helpers
----------------------------------------------------------------------------
-
----Text colour that reads on `bg`: near-black on light colours, white otherwise (matches UI.iconColor)
 function UI.textColorOn(bg)
 	local lum = bg and (bg[1] * 0.3 + bg[2] * 0.59 + bg[3] * 0.11) or 0
 	if (lum > 0.72) then return { 0.12, 0.08, 0.08, 1 } end
@@ -131,7 +116,6 @@ local function inside(el, x, y)
 		x >= el.pos.x and x <= el.pos.x + el.size.w and y >= el.pos.y and y <= el.pos.y + el.size.h
 end
 
----Every top-level piece of UI (docks, toolbar, status, overlays)
 function UI.roots()
 	local list = { UI.dialog, UI.help, UI.tour, UI.toolbar, UI.status, UI.testBar }
 	for _, el in pairs(UI.dockEls or {}) do table.insert(list, el) end
@@ -152,10 +136,6 @@ function UI.fieldFocused()
 	return false
 end
 
----Killing a text field that isn't focused leaves it in the game's global UIKeyboardHandler list (the engine only
----removes elements whose `keyboard` flag is set). Every panel rebuild left a few hundred dead fields behind, and
----every key press, key release, text input and mouse click walks - and copies - that whole list, so typing got
----slower the longer Mod Studio had been open. Drop the dead entries (in place: the list is shared).
 function UI.purgeKeyboardHandlers()
 	local list = UIKeyboardHandler
 	if (type(list) ~= "table") then return 0 end
@@ -180,25 +160,15 @@ function UI.blurFields()
 	end
 end
 
----------------------------------------------------------------------------
--- Widgets
----------------------------------------------------------------------------
-
--- BadaBoom, the game's own heading font
 UI.TITLE_FONT = (FONTS and FONTS.BIG) or 0
 
----Type scale: every piece of text picks a role instead of a raw number.
----Final size = role size * UI.textK (which follows the interface-size setting).
 UI.TEXT = { small = 0.42, body = 0.5, heading = 0.55, title = 0.7 }
-UI.TEXT_MIN = 0.85 -- text may shrink to this fraction of its role size before wrapping/truncating
+UI.TEXT_MIN = 0.85
 
----BadaBoom is far larger per unit scale than font 4, so it has its own (smaller) role sizes
----(these match the pre-unification header looks: bars 0.5, pane headings/dock title 0.5, dialog titles 0.65).
-UI.TITLE_TEXT = { small = 0.34, body = 0.36, heading = 0.27, title = 0.36, brand = 0.4 } -- brand: the toolbar "Mod Studio" title, locked
-UI.TITLE_MIN = 0.65 -- headings in the big font may shrink to this fraction before truncating
-UI.WORD_MIN = 0.7 -- single words (tabs, short buttons) may shrink to this fraction before truncating
+UI.TITLE_TEXT = { small = 0.34, body = 0.36, heading = 0.27, title = 0.36, brand = 0.4 }
+UI.TITLE_MIN = 0.65
+UI.WORD_MIN = 0.7
 
----Role name (or a legacy number, snapped to the nearest role) -> role size, unscaled
 function UI.textSize(role, font)
 	local tbl = (font ~= nil and font == UI.TITLE_FONT and font ~= 4) and UI.TITLE_TEXT or UI.TEXT
 	if (type(role) == "string") then return tbl[role] or tbl.body end
@@ -211,18 +181,14 @@ function UI.textSize(role, font)
 	return best
 end
 
----Smallest fraction of its role size that text may shrink to before it is cut.
 UI.FIT_MIN = 0.7
 
----Width of `str` at scale 1, or nil when it can't be measured
 function UI.textWidth(str, font)
 	local ok, w = pcall(get_string_length, tostring(str or ""), font or 4)
 	if (ok and type(w) == "number" and w > 0) then return w end
 	return nil
 end
 
----Fraction (at most 1) of the role size at which `str` fits `avail` pixels on one line.
----Same width-only measurement UI.addText uses, so groups and single labels agree.
 function UI.fitFrac(str, avail, role, font)
 	local tw = UI.textWidth(str, font)
 	if (not tw or not avail or avail <= 0) then return 1 end
@@ -231,19 +197,12 @@ function UI.fitFrac(str, avail, role, font)
 	return math.min(1, avail / (tw * top))
 end
 
----Shared scale for a group: the smallest fit, never below `floor` (default UI.ICON_MIN, the
----smallest a button label gets, so a button group never ends up bigger than its tightest label)
 function UI.groupFrac(fracs, floor)
 	local m = 1
 	for _, f in ipairs(fracs) do if (f < m) then m = f end end
 	return math.max(floor or UI.ICON_MIN or 0.55, m)
 end
 
----Draw text in `el`. One-line text shrinks to fit its width (down to UI.FIT_MIN of the role size),
----then loses a trailing "(...)" note, then is cut with "...".
----`frac` forces a scale (fraction of the role size) so a group of neighbours can share one;
----it still drops the note / cuts with "..." if the text doesn't fit even then.
----Never breaks inside a word; wraps only strings with spaces in boxes tall enough for two lines.
 function UI.addText(el, override, str, x, y, font, align, role, frac)
 	local top = UI.textSize(role, font) * UI.textK
 	str = tostring(str or "")
@@ -251,16 +210,14 @@ function UI.addText(el, override, str, x, y, font, align, role, frac)
 	local hasSpace = str:find("%s") ~= nil
 	local sc = top
 	local tallBox = override or (el.size and el.size.h and el.size.h >= ROW * 1.6)
-	-- One-line text is checked by width only: uiText's own check also fails when a line is taller
-	-- than the box, which is always true for the big heading font and cut headings to one letter.
-	-- Same text area toriui uses: width minus the left offset (x) and right offset (x2)
+
 	local xoff = (type(x) == "table") and ((tonumber(x[1]) or 0) + (tonumber(x[2]) or 0)) or (tonumber(x) or 0)
 	local avail = ((el.size and el.size.w) or 0) - xoff - 4
 	local function fits(t, s)
 		if (avail <= 0) then return true end
 		local tw = UI.textWidth(t, font)
 		if (not tw) then return true end
-		-- Small tolerance: a group scale computed as exactly avail / width must count as fitting
+
 		return tw * s <= avail + 0.5
 	end
 	local wraps = hasSpace and tallBox and not isTitle
@@ -280,7 +237,7 @@ function UI.addText(el, override, str, x, y, font, align, role, frac)
 				str = t .. "..."
 			end
 		else
-			-- Largest scale in [FIT_MIN, 1] x role size at which s fits, or nil
+
 			local function pick(s)
 				if (fits(s, top)) then return top end
 				local tw = UI.textWidth(s, font)
@@ -329,8 +286,6 @@ local function hint(parent, x, y, w, h, str, scale)
 end
 UI.hint = hint
 
----Icons picked automatically from a button's label, so every panel gets them without repeating names.
----Buttons that already pass icon = ... win; pass noAutoIcon = true to opt out (the top toolbar does).
 UI.LABEL_ICONS = {
 	["Triangle"] = "tri", ["Flat triangle"] = "tri", ["Ramp"] = "ramp", ["Ball"] = "sphere",
 	["Parent"] = "parent", ["Pick parent"] = "parent", ["Click parent"] = "parent", ["Pick parent..."] = "parent",
@@ -352,17 +307,8 @@ UI.LABEL_ICONS = {
 	["Grid on"] = "grid", ["Grid off"] = "grid", ["Scale whole player"] = "scale", ["Put at midpoint"] = "move",
 }
 
----Smallest label size (fraction of the role size) a button keeps beside its icon
 UI.ICON_MIN = 0.55
 
----How a button of this size shows itself: icon, fraction of the role size for its label, and whether
----the label is shown at all. In order of preference:
----  1. icon + label, label at >= UI.ICON_MIN beside the icon
----  2. label alone at >= UI.FIT_MIN
----  3. icon alone (the label becomes the tooltip) when there is an icon
----  4. label alone, cut with "..."
----Uses the same width measurement as UI.addText (text area = width - left offset - 4).
----o.mode (set for a whole group by UI.groupMode) forces one look: "both", "text" or "icon".
 function UI.buttonFit(w, h, text, o)
 	local hasText = text and text ~= ""
 	local icon = UI.iconFor(text, o)
@@ -381,16 +327,12 @@ function UI.buttonFit(w, h, text, o)
 	return icon, 1, false
 end
 
----The icon a button shows: its own, or the one picked from its label
 function UI.iconFor(text, o)
 	if (o.icon) then return o.icon end
 	if (text and text ~= "" and not o.noAutoIcon) then return UI.LABEL_ICONS[text] end
 	return nil
 end
 
----One look for a whole group of buttons, so neighbours always match. rows = { { w = , h = , items = } }.
----Every labelled button has an icon -> icon + label if they all fit, else label only if they all fit,
----else icon only. Any labelled button without an icon -> label only for the whole group.
 function UI.groupMode(rows)
 	local allIcons, any = true, false
 	for _, r in ipairs(rows) do
@@ -415,7 +357,6 @@ function UI.groupMode(rows)
 	return both and "both" or (alone and "text" or "icon")
 end
 
----Appends to `fracs` the label fit of every button in `items` (that shows a label) when each is `w` x `h`
 local function rowFracs(w, h, items, fracs, mode)
 	fracs = fracs or {}
 	for _, it in ipairs(items) do
@@ -428,9 +369,6 @@ local function rowFracs(w, h, items, fracs, mode)
 end
 UI.rowFracs = rowFracs
 
----Button. o: active, disabled, tip, color, scale, align,
----icon (name from icons.lua; with empty text the button is icon only, otherwise the icon sits left of the text),
----iconDim (draw the icon faded, for an "off" state)
 local function button(parent, x, y, w, h, text, onClick, o)
 	o = o or {}
 	local bg = o.active and C.lightest or (o.color or C.dark)
@@ -439,11 +377,11 @@ local function button(parent, x, y, w, h, text, onClick, o)
 		shapeType = ROUNDED, rounded = UI.r(2),
 		interactive = not o.disabled,
 		bgColor = bg,
-		-- A lit (accent) button stays lit on hover, so its dark-on-light text stays readable
+
 		hoverColor = o.active and { bg[1] * 0.9, bg[2] * 0.9, bg[3] * 0.9, 1 } or C.light, pressedColor = C.darkest,
 		inactiveColor = C.darkest
 	})
-	-- Light backgrounds (a White accent, say) get dark text, same rule as the icons
+
 	b.uiColor = UI.textColorOn(bg)
 	local hasText = text and text ~= ""
 	local icon, ownFit, showText = UI.buttonFit(w, h, text, o)
@@ -453,27 +391,23 @@ local function button(parent, x, y, w, h, text, onClick, o)
 	if (showText) then
 		local shift = o.align == LEFTMID and 6 or nil
 		if (icon) then shift = h + 2 end
-		-- A group scale never makes this label bigger than it fits at by itself
+
 		local fit = o.fit and math.min(o.fit, ownFit) or nil
 		UI.addText(b, false, text, shift, nil, 4, icon and LEFTMID or (o.align or CENTERMID), o.scale or "body", fit)
 	end
 	if (onClick and not o.disabled) then
 		b:addMouseHandlers(nil, function() onClick() end)
 	end
-	-- Icon-only buttons show their label as the tooltip
+
 	local tip = o.tip or ((hasText and not showText) and text or nil)
 	if (tip) then
-		-- A function tip is worked out on hover (e.g. "last autosaved 20 s ago")
+
 		b:addMouseHandlers(nil, nil, function() UI.setTip(type(tip) == "function" and tip() or tip, b) end)
 	end
 	return b
 end
 UI.button = button
 
----Row of evenly sized buttons. items = { { text, fn, active = , tip = , disabled = } }
----All labels in the row share one scale (the smallest fit, floor UI.FIT_MIN) so neighbours match.
----`fit` overrides it, for a grid of several rows that must share a scale.
----`mode` (from UI.gridMode) makes a grid of rows share one look; a lone row works its own out.
 local function buttonRow(parent, x, y, w, h, items, fit, mode)
 	local n = #items
 	local bw = (w - GAP * (n - 1)) / n
@@ -494,10 +428,8 @@ local function gridRows(w, h, rows)
 	return t
 end
 
----One look (see UI.groupMode) for a grid made of several rows of items in `w` total width
 function UI.gridMode(w, h, rows) return UI.groupMode(gridRows(w, h, rows)) end
 
----Shared scale for a grid made of several rows of items in `w` total width
 function UI.gridFit(w, h, rows, mode)
 	local fracs = {}
 	mode = mode or UI.gridMode(w, h, rows)
@@ -505,8 +437,6 @@ function UI.gridFit(w, h, rows, mode)
 	return UI.groupFrac(fracs)
 end
 
----A number as text that fits a text field `w` wide: drops decimals until it fits (never the whole part).
----The game's field draws inside w - 4, pads the text 3 px each side and keeps 7 px for the cursor.
 local function fitNumber(v, w, scale)
 	local room = w - 17
 	local s = MS.fmt(v)
@@ -521,7 +451,6 @@ local function fitNumber(v, w, scale)
 	return s
 end
 
----Text input. o: numeric, live (getter for auto refresh), placeholder, align
 local function field(parent, x, y, w, h, value, o, onChange)
 	o = o or {}
 	local scale = UI.textSize("body") * UI.textK
@@ -553,7 +482,7 @@ local function field(parent, x, y, w, h, value, o, onChange)
 					f.textfieldindex = string.len(s)
 				end
 			elseif (o.numeric and not f.msEditing) then
-				-- Just clicked in: swap the shortened display for the exact value so editing never loses decimals
+
 				f.msEditing = true
 				local ok, v = pcall(o.live)
 				local s = ok and MS.fmt(v) or nil
@@ -568,7 +497,6 @@ local function field(parent, x, y, w, h, value, o, onChange)
 end
 UI.field = field
 
----Lets the user drag left/right on an element to change a number
 local function scrub(el, get, set, step, o)
 	o = o or {}
 	el:addMouseHandlers(function(_, x)
@@ -605,7 +533,6 @@ local function clampEntry(e, v)
 	return v
 end
 
----label | [-] [ value ] [+]
 local function numRow(holder, y, w, e)
 	local lw = floor(w * 0.44)
 	local lab = holder:addChild({ pos = { 0, y }, size = { lw - 2, ROW }, interactive = true,
@@ -625,7 +552,6 @@ local function numRow(holder, y, w, e)
 	button(holder, w - ROW, y, ROW, ROW, "", function() nudge(1) end, { icon = "plus", tip = "Increase (Shift: x10)" })
 end
 
----label | X [  ] Y [  ] Z [  ]   (drag the letters to scrub)
 local function vec3Row(holder, y, w, e)
 	local lw = floor(w * 0.26)
 	label(holder, 4, y, lw - 4, ROW, e.label, LEFTMID, "body", nil, e.labelFit)
@@ -687,7 +613,7 @@ local function choiceRow(holder, y, w, e)
 			UI.requestRefresh()
 		end, active = tostring(cur) == tostring(opt[1]), tip = e.tip })
 	end
-	-- Long lists wrap onto more rows (give the entry rows = ceil(#options / perRow))
+
 	local per = e.perRow or #items
 	local rows = {}
 	for r = 0, math.ceil(#items / per) - 1 do
@@ -696,7 +622,7 @@ local function choiceRow(holder, y, w, e)
 		while (#row < per and r > 0) do table.insert(row, { "", function() end, disabled = true }) end
 		table.insert(rows, row)
 	end
-	-- Every row of the list shares one look and one label size
+
 	local mode = UI.gridMode(w - lw, ROW, rows)
 	local fit = UI.gridFit(w - lw, ROW, rows, mode)
 	for r, row in ipairs(rows) do
@@ -720,8 +646,6 @@ local function swatchesRow(holder, y, w, e)
 	end
 end
 
----Renders one row entry. Kinds: header hint num vec3 slider toggle text choice buttons swatches custom
----Folded sections are remembered in settings
 function UI.isFolded(id)
 	local f = MS.settings.folded
 	return f and f[id] == true
@@ -734,7 +658,6 @@ function UI.setFolded(id, folded)
 	UI.requestRefresh()
 end
 
----Builds one long entry list out of foldable sections: { { id, title, fn -> entries }, ... }
 function UI.sections(list)
 	local out = {}
 	for _, sec in ipairs(list) do
@@ -779,9 +702,6 @@ function UI.renderEntry(holder, y, e, w)
 	end
 end
 
----Shared text scales across an entry list, so neighbours match:
----consecutive "buttons" entries form one grid (one scale, floor UI.FIT_MIN), and the left labels of
----num / vec3 / slider / text / choice / toggle rows share one scale (floor 0.8, from the longest label).
 function UI.prepareFits(entries, w)
 	local i, n = 1, #entries
 	while (i <= n) do
@@ -819,9 +739,6 @@ function UI.prepareFits(entries, w)
 	end
 end
 
----Scrolling list of entries filling `height`. Only rows in view are created;
----the mouse wheel, the scroll bar (drag the thumb or click the track) move it.
----UI.pages[pageKey] holds the first visible entry.
 local SCROLL_W = 10
 UI.scrollAreas = UI.scrollAreas or {}
 function UI.paged(parent, topY, height, entries, pageKey, render)
@@ -838,7 +755,7 @@ function UI.paged(parent, topY, height, entries, pageKey, render)
 	local scrolling = total > avail
 	local w = scrolling and (fullW - SCROLL_W - GAP * 2) or fullW
 	if (render == UI.renderEntry) then UI.prepareFits(entries, w) end
-	-- Highest first entry that still fills the view to the bottom
+
 	local maxFirst, acc = #entries, 0
 	for i = #entries, 1, -1 do
 		acc = acc + heights[i]
@@ -870,7 +787,7 @@ function UI.paged(parent, topY, height, entries, pageKey, render)
 		local travel = th - thumbH
 		local thumbY = maxFirst > 1 and floor(travel * (first - 1) / (maxFirst - 1)) or 0
 		track:addMouseHandlers(nil, function(_, _, my)
-			-- Click above / below the thumb: one screen up / down
+
 			local dir = (my or 0) < track.pos.y + thumbY and -1 or 1
 			UI.pages[pageKey] = MS.clamp(first + dir * math.max(1, shown - 1), 1, maxFirst)
 			UI.requestRefresh()
@@ -887,7 +804,6 @@ function UI.paged(parent, topY, height, entries, pageKey, render)
 	return holder
 end
 
----Mouse wheel over a panel. Returns true when the panel used it.
 function UI.handleWheel(x, y, btn)
 	for i = #UI.scrollAreas, 1, -1 do
 		local a = UI.scrollAreas[i]
@@ -903,14 +819,9 @@ function UI.handleWheel(x, y, btn)
 			return true
 		end
 	end
-	-- Over a panel but not over a list: still don't zoom the camera
+
 	return true
 end
-
----------------------------------------------------------------------------
--- Pointer drags that outlive the element they started on (scroll thumbs,
--- moving / resizing panels). Followed every frame from UI.tick.
----------------------------------------------------------------------------
 
 function UI.startPointerDrag(d)
 	d.mx0, d.my0 = MS.G.mouseX or MOUSE_X or 0, MS.G.mouseY or MOUSE_Y or 0
@@ -962,7 +873,7 @@ local function followPointerDrag()
 		pcall(draw_quad, lx, ly, lw, lh)
 		return
 	end
-	-- layout: move or resize, drawn as an outline until you let go
+
 	local r0 = d.rect0
 	local dx, dy = mx - d.mx0, my - d.my0
 	local r
@@ -982,7 +893,6 @@ local function followPointerDrag()
 end
 UI.followPointerDrag = followPointerDrag
 
----A small handle that starts moving / resizing a piece of UI
 local function layoutGrip(parent, x, y, w, h, text, target, mode, rectFn, tip)
 	local g = parent:addChild({
 		pos = { x, y }, size = { w, h }, interactive = true,
@@ -1007,10 +917,6 @@ function UI.resetLayout()
 	UI.open()
 	MS.toast("Panels are back in their default places")
 end
-
----------------------------------------------------------------------------
--- Entry builders for objects
----------------------------------------------------------------------------
 
 local POSF = { "pos_x", "pos_y", "pos_z" }
 local ROTF = { "rot_x", "rot_y", "rot_z" }
@@ -1099,7 +1005,6 @@ local function trigEntries(get, set)
 	}
 end
 
----Every plain field the engine knows, as a fallback page for anything not covered elsewhere
 local function shapeChoice(get, set)
 	return { kind = "choice", label = "Shape", get = get, set = set,
 		options = { { 1, "Box" }, { 0, "Sphere" }, { 2, "Cylinder" } }, tip = "Change the collision shape" }
@@ -1119,7 +1024,7 @@ local function objTransformEntries()
 				MS.translateSelection(d)
 			end },
 		(function()
-			-- Turning a parent swings its children around with it
+
 			local e = envVec("Rotation", ROTF, 5, "Degrees. Drag the letters or type a value")
 			local set = e.set
 			e.set = function(k, v) MS.withChildrenFollowing(set, k, v) end
@@ -1139,10 +1044,10 @@ local function objTransformEntries()
 		for _, idx in ipairs(envTargets("type")) do
 			local ob = MS.objs[idx]
 			local old = ob.type
-			-- Read the old sizes first: the writes below change ob
+
 			local dx, dy, dz = ob.dims_x, ob.dims_y, ob.dims_z
 			MS.objSet(idx, "type", v)
-			-- Keep the object roughly the same size when switching shapes
+
 			if (old == 1 and v ~= 1) then
 				MS.objSet(idx, "dims_x", math.max(dx or 1, dy or 1) / 2)
 				if (v == 2) then MS.objSet(idx, "dims_y", dz or 1) end
@@ -1391,14 +1296,9 @@ local function objInfoEntries()
 	return entries
 end
 
----------------------------------------------------------------------------
--- 3D model (per object) and asset tools
----------------------------------------------------------------------------
-
 UI.modelFilter = UI.modelFilter or ""
 UI.assetLog = UI.assetLog or {}
 
----Objects that can carry a model: everything selected except triangle slices
 local function modelTargets()
 	local list = {}
 	for _, idx in ipairs(MS.selList()) do
@@ -1408,7 +1308,6 @@ local function modelTargets()
 	return list
 end
 
----Properties > 3D model: which model, change / remove, size, solid
 local function objModelEntries()
 	if (MS.selSingleTri()) then
 		return { { kind = "hint", rows = 2, label = "Triangles are built from many boxes, so they can't carry one model. Give a single box or ball a 3D model instead." } }
@@ -1463,7 +1362,6 @@ local function objModelEntries()
 	return entries
 end
 
----Left dock: every .obj in data/mod_assets, rescanned live while this tab is open
 function UI.tabModels(pane)
 	local w = pane.size.w - PAD * 2
 	local y = PAD
@@ -1534,7 +1432,6 @@ function UI.tabModels(pane)
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "models")
 end
 
----3D model assets block of the File tab: models used, download note, asset pack
 function UI.assetEntries()
 	local rep = MS.assetReport(false)
 	local entries = {}
@@ -1589,12 +1486,6 @@ function UI.assetEntries()
 	return entries
 end
 
----------------------------------------------------------------------------
--- Tabs
----------------------------------------------------------------------------
-
----Scene list rows as a tree: { idx, key, tri, name, tag, depth, kids, uid }.
----While searching it's a flat list of matches instead.
 local function outlinerItems()
 	local items = {}
 	local filter = (UI.filter or ""):lower()
@@ -1644,7 +1535,6 @@ function UI.finishParentPick(idx)
 	UI.requestRefresh()
 end
 
----Folds or unfolds every branch in the Scene list
 function UI.toggleAllBranches()
 	local H = MS.hier()
 	local anyOpen = false
@@ -1662,7 +1552,6 @@ function UI.toggleAllBranches()
 	UI.requestRefresh()
 end
 
----Left dock: add buttons + the list of everything in the mod
 function UI.tabScene(pane)
 	local w = pane.size.w - PAD * 2
 	local y = PAD
@@ -1695,7 +1584,6 @@ function UI.tabScene(pane)
 	})
 	y = y + ROW + GAP * 3
 
-	-- Outliner
 	local items = outlinerItems()
 	local filtering = (UI.filter or "") ~= ""
 	label(pane, PAD, y, w * 0.42, ROW, "Scene (" .. MS.count(MS.objs) .. " objects)", LEFTMID, "body")
@@ -1766,7 +1654,6 @@ function UI.tabScene(pane)
 	end
 end
 
----Right dock: everything about the current selection
 function UI.tabProperties(pane)
 	local w = pane.size.w - PAD * 2
 	local y = PAD
@@ -2084,10 +1971,6 @@ function UI.tabLinks(pane)
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "links:fields")
 end
 
----------------------------------------------------------------------------
--- Players (bodies + joints)
----------------------------------------------------------------------------
-
 local PLAYER_NAMES = { [0] = "Tori", "Uke", "Player 3", "Player 4" }
 
 local function playerRow(pane, y, w, current, onPick)
@@ -2124,8 +2007,6 @@ function UI.selectJoint(p, j)
 	MS.toast("Selected " .. (PLAYER_NAMES[p] or "") .. " " .. MS.jointName(p, j))
 end
 
--- Selecting an object (3D view, Scene list, anywhere) shows its Properties instead of the
--- Bodies / Joints tab. Clicking a body part or joint opens its own tab (viewport.lua).
 for _, fnName in ipairs({ "selSet", "selAdd", "selToggle" }) do
 	local orig = MS[fnName]
 	MS[fnName] = function(...)
@@ -2180,12 +2061,12 @@ function UI.tabPlayers(pane)
 				". Pick the other player at the top. Only this player moves (its start position); use Face the other way to turn. Drag the yellow dot to resize the dojo." },
 			{ kind = "buttons", items = {
 				{ (MS.faceFlipped and MS.faceFlipped[p]) and "Face back" or "Face the other way", function()
-					-- Turns the whole player with the start-rotation rules (press again to turn back)
+
 					MS.faceToggle(p)
 					UI.requestRefresh()
 				end },
 				{ "Reset this player", function()
-					-- Body, joints, start position and facing all go back to the default
+
 					MS.resetTo(p)
 					UI.requestRefresh()
 				end }
@@ -2200,7 +2081,7 @@ function UI.tabPlayers(pane)
 				get = function() return tonumber(MS.getRule("dojotype")) or 0 end,
 				set = function(v)
 					MS.pushUndo("Dojo shape")
-					-- Keep the same footprint when switching shape
+
 					local r = MS.dojoShape()
 					MS.setRule("dojotype", v)
 					if (r) then MS.setDojoFromRadius(r) end
@@ -2210,7 +2091,7 @@ function UI.tabPlayers(pane)
 				set = function(v)
 					MS.pushUndo("Dojo size", "rule:dojosize")
 					v = floor(v)
-					-- First step up from "no dojo": jump to a real arena size, not a 25cm box
+
 					if (v > 0 and v < 100 and (tonumber(MS.getRule("dojosize")) or 0) == 0) then v = 450 end
 					MS.setRule("dojosize", math.max(0, v))
 					if (v > 0) then MS.settings.showDojo = true end
@@ -2339,7 +2220,7 @@ function UI.tabJoints(pane)
 	end
 	local y = playerRow(pane, PAD, w, p, function(np) UI.selectJoint(np, j) end)
 	y = partGrid(pane, y, w, MS.jointNameList(p), MS.numJoints(p), j, function(nj) UI.selectJoint(p, nj) end)
-	-- Which two body parts this joint connects (alpha 2 and newer)
+
 	local jb1, jb2 = MS.jointBodies(p, j)
 	if (jb1) then
 		hint(pane, PAD, y, w, ROW, "Connects " .. MS.bodyName(p, jb1) .. " and " .. MS.bodyName(p, jb2), "body")
@@ -2467,10 +2348,6 @@ function UI.tabJoints(pane)
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "joints")
 end
 
----------------------------------------------------------------------------
--- Rules / World / File / Console / Settings
----------------------------------------------------------------------------
-
 function UI.tabRules(pane)
 	local w = pane.size.w - PAD * 2
 	local y = PAD
@@ -2485,7 +2362,6 @@ function UI.tabRules(pane)
 	})
 	y = y + ROW + GAP * 3
 
-	-- Game flags: one bit each, with what they do written out
 	local flags = MS.getFlags()
 	local entries = {
 		{ kind = "header", label = "Game flags   (flags = " .. flags .. ": " .. MS.flagsSummary(flags) .. ")" }
@@ -2667,7 +2543,7 @@ function UI.tabFile(pane)
 		{ kind = "header", label = "Start from a template (objects + rules)" }
 	}
 	do
-		-- 3D model assets (list, welcome-message note, asset pack) sit above Autosave
+
 		local at
 		for i, e in ipairs(entries) do
 			if (e.kind == "header" and e.label == "Autosave") then at = i break end
@@ -2767,13 +2643,13 @@ function UI.tabSettings(pane)
 		return { kind = "num", label = lbl, step = step, min = o.min, max = o.max, int = o.int, tip = o.tip,
 			get = function() return st[key] end, set = function(v) st[key] = v end }
 	end
-	-- Look changes rebuild the whole UI, so sliders only do it when let go
+
 	local function rebuildLook()
 		MS.saveSettings()
 		UI.close()
 		UI.open()
 	end
-	---R / G / B sliders for a custom colour (nothing unless that colour is set to Custom)
+
 	local function rgb(name, key, shown)
 		if (not shown) then return false end
 		if (type(st[key]) ~= "table") then st[key] = { 0.4, 0.4, 0.45 } end
@@ -2907,11 +2783,6 @@ function UI.tabSettings(pane)
 	UI.paged(pane, PAD, pane.size.h - PAD * 2, entries, "settings")
 end
 
----------------------------------------------------------------------------
--- Stats
----------------------------------------------------------------------------
-
----Usage bar: label | [#####-----] text
 local function usageBar(holder, y, w, labelText, used, limit, note)
 	local lw = floor(w * 0.36)
 	label(holder, 4, y, lw - 4, ROW, labelText, LEFTMID, "body")
@@ -2983,7 +2854,7 @@ function UI.tabStats(pane)
 	if (biggestTri and limit and triSlices > limit * 0.25) then
 		table.insert(entries, { kind = "hint", rows = 2, label = "Triangles use a big share of your objects. Lower their Smoothness to free some up (biggest: " .. (MS.tris[biggestTri].name or ("Triangle " .. biggestTri)) .. ", " .. biggestN .. " slices)." })
 	end
-	-- Object saver
+
 	UI.saverTri = UI.saverTri or 8
 	local plan = MS.planObjectSaver(UI.saverTri > 0 and UI.saverTri or nil)
 	table.insert(entries, { kind = "header", label = "Object saver" })
@@ -3009,7 +2880,6 @@ function UI.tabStats(pane)
 			disabled = plan.total == 0, tip = "One undo step - Ctrl+Z puts everything back" }
 	} })
 
-	-- Mod check
 	table.insert(entries, { kind = "header", label = "Mod check (also runs when you export)" })
 	local issues = MS.checkMod()
 	if (#issues == 0) then
@@ -3040,10 +2910,6 @@ function UI.tabStats(pane)
 	table.insert(entries, { kind = "buttons", items = { { "Refresh", function() UI.requestRefresh() end } } })
 	UI.paged(pane, PAD, pane.size.h - PAD * 2, entries, "stats")
 end
-
----------------------------------------------------------------------------
--- Library (prefabs)
----------------------------------------------------------------------------
 
 UI.prefabName = UI.prefabName or ""
 
@@ -3089,11 +2955,6 @@ function UI.tabLibrary(pane)
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "library")
 end
 
----------------------------------------------------------------------------
--- Docks: three panels around the screen edges, each with its own tabs.
--- Click a panel's active tab to tuck it away, click any tab to open it.
----------------------------------------------------------------------------
-
 UI.TAB_BUILD = {
 	scene = function(p) UI.tabScene(p) end,
 	create = function(p) UI.tabCreate(p) end,
@@ -3135,7 +2996,6 @@ UI.dockState = UI.dockState or {
 UI.dockEls = UI.dockEls or {}
 UI.dockContent = UI.dockContent or {}
 
-
 function UI.isTabOpen(id)
 	for _, st in pairs(UI.dockState) do
 		if (st.open and st.active == id) then return true end
@@ -3151,7 +3011,6 @@ local function dockOf(id)
 	end
 end
 
----Opens the panel that holds tab `id` and shows that tab
 function UI.selectTab(id)
 	local side = dockOf(id)
 	if (not side) then return end
@@ -3166,45 +3025,41 @@ local function dockRect(side)
 	local top = UI.topBarH()
 	local bottom = WIN_H - UI.statusH()
 	local open = UI.dockState[side].open
-	-- Moved / resized by the user (kept on screen if the window got smaller)
+
 	local L = MS.settings.layout and MS.settings.layout[side]
 	if (L and L.w) then
 		local w = MS.clamp(L.w, 200, WIN_W - 4)
 		local x = MS.clamp(L.x, 0, WIN_W - w)
-		-- Never under the toolbar: the panel's own tabs would be hidden behind it
+
 		local lowest = math.max(top, bottom - UI.HEADER_H)
 		local y = MS.clamp(L.y, top, lowest)
 		if (not open) then
 			if (side == "bottom") then
-				-- Tucked away: sit on the bottom edge of where the panel opens
+
 				y = MS.clamp(L.y + (L.h or UI.HEADER_H) - UI.HEADER_H, top, lowest)
 			end
 			return x, y, w, UI.HEADER_H
 		end
-		-- Would run off the bottom of the screen: pop up instead (but not past the toolbar)
+
 		local h = MS.clamp(L.h or 120, math.min(120, bottom - top), bottom - top)
 		y = math.max(top, math.min(L.y, bottom - h))
 		return x, y, w, h
 	end
-	-- Default: Scene down the left, Properties down the right, the bottom
-	-- tabs in between (see layout.lua). Tucked-away side panels become rails.
+
 	return UI.layoutCalc.dockRect(side, {
 		left = UI.dockState.left.open, right = UI.dockState.right.open, bottom = UI.dockState.bottom.open
 	}, MS.settings.dockSizes or {}, UI.layoutMetrics())
 end
 
----Window and bar sizes the layout maths needs
 function UI.layoutMetrics()
 	return { winW = WIN_W, winH = WIN_H, top = UI.topBarH(), bottom = WIN_H - UI.statusH(), row = ROW, header = UI.HEADER_H, k = UI.k }
 end
 
----Is this panel in its default place (not dragged somewhere by the user)?
 function UI.isDocked(side)
 	local L = MS.settings.layout and MS.settings.layout[side]
 	return not (L and L.w)
 end
 
----Remembers which tabs are open between sessions
 function UI.saveDockState()
 	MS.settings.dockState = UI.layoutCalc.serializeState(UI.dockState)
 	MS.saveSettings()
@@ -3219,15 +3074,12 @@ function UI.restoreDockState()
 	UI.layoutCalc.restoreState(UI.dockState, MS.settings.dockState, tabs)
 end
 
----Rebuilds a panel after it was opened / tucked away. The default Properties
----panel sits under the Scene panel, so it follows when Scene changes size.
 function UI.rebuildAfterToggle(side)
 	UI.saveDockState()
-	-- Tucking a side panel away widens the bottom one, so rebuild them all
+
 	UI.buildDocks()
 end
 
----A thin strip on the inner edge of a docked panel: drag to resize, double-click to reset
 function UI.edgeHandle(root, side)
 	local Lc = UI.layoutCalc
 	local t = Lc.EDGE
@@ -3273,8 +3125,6 @@ function UI.buildDock(side)
 	local Lc = UI.layoutCalc
 	local docked = UI.isDocked(side)
 
-	-- A tucked-away side panel in its default place is a thin rail: an open
-	-- button, then one button per tab
 	if (docked and not st.open and side ~= "bottom") then
 		button(inner, 2, 3, inner.size.w - 4, ROW, "", function()
 			st.open = true
@@ -3290,7 +3140,6 @@ function UI.buildDock(side)
 		return
 	end
 
-	-- Tab row (always visible, even when the panel is tucked away) on a darker strip
 	inner:addChild({ pos = { 0, 0 }, size = { inner.size.w, UI.HEADER_H }, bgColor = C.darkest })
 	local n = #def.tabs
 	local tw = (inner.size.w - 4 - (ROW + GAP) * 2 - GAP * (n - 1)) / n
@@ -3304,7 +3153,7 @@ function UI.buildDock(side)
 	end
 	local tabFit = UI.groupFrac(tabFracs)
 	local function fullRect()
-		-- Always the opened rect, so a tucked panel saves where it opens
+
 		local wasOpen = st.open
 		st.open = true
 		local fx, fy, fw, fh = dockRect(side)
@@ -3328,10 +3177,10 @@ function UI.buildDock(side)
 		end, { color = isActive and C.bg or C.dark, scale = "body",
 			icon = UI.TAB_ICONS[id], noAutoIcon = true, fit = tabFit, mode = tabMode,
 			tip = isActive and "Click again to tuck this panel away" or t[2] })
-		-- The tour points at tabs by id
+
 		UI.tabBtns = UI.tabBtns or {}
 		UI.tabBtns[id] = tabBtn
-		-- Active tab: panel colour with an accent underline
+
 		if (isActive) then
 			tabBtn:addChild({ pos = { 0, ROW - 2 }, size = { tw, 2 }, bgColor = C.lightest })
 		end
@@ -3345,11 +3194,11 @@ function UI.buildDock(side)
 	local content = inner:addChild({ pos = { 0, UI.HEADER_H }, size = { inner.size.w, inner.size.h - UI.HEADER_H }, bgColor = C.bg })
 	UI.dockContent[side] = content
 	UI.refreshDock(side)
-	-- Resize handle in the bottom-right corner, on top of the content
+
 	UI.dockGrips = UI.dockGrips or {}
 	UI.dockGrips[side] = layoutGrip(inner, inner.size.w - 16, inner.size.h - 16, 16, 16, "/", side, "resize", fullRect,
 		"Drag to resize this panel")
-	-- Panels in their default place also resize by dragging their inner edge
+
 	if (docked) then UI.edgeHandle(root, side) end
 end
 
@@ -3383,10 +3232,6 @@ function UI.buildDocks()
 	end
 end
 
----------------------------------------------------------------------------
--- Toolbar
----------------------------------------------------------------------------
-
 function UI.setTool(tool)
 	MS.settings.tool = tool
 	UI.buildToolbar()
@@ -3414,7 +3259,6 @@ function UI.toggleAutosave()
 	MS.toast(MS.settings.autosave and ("Autosave on - every " .. (MS.settings.autosaveMinutes or 5) .. " min") or "Autosave off - remember to Save project / Export")
 end
 
----Toolbar tip for the autosave button: how often, and when it last saved
 function UI.autosaveTip()
 	if (not MS.settings.autosave) then return "Autosave is off. Click to turn it on (Settings > Saving sets how often)" end
 	local ago = MS.lastAutosaveDone and floor(MS.clock() - MS.lastAutosaveDone) or nil
@@ -3468,7 +3312,7 @@ function UI.buildToolbar()
 	local titleW = L and 0 or floor(120 * UI.k)
 	local bw = math.min(floor(62 * UI.k), floor((WIN_W - 60 - titleW - seps * 10) / n))
 	local contentW = n * (bw + GAP) + seps * 10 + 6 + 16 + GAP
-	-- Docked: a full-width top bar. Moved by the user: a compact floating bar.
+
 	local W = L and contentW or WIN_W
 	local tx = L and MS.clamp(L.x, 0, WIN_W - W) or 0
 	local ty = L and MS.clamp(L.y, 0, WIN_H - h - 6) or 0
@@ -3492,15 +3336,14 @@ function UI.buildToolbar()
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
-			-- Kept by label (or key) so the tour can point at them
+
 			UI.toolbarBtns[it.key or it[1]] = button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = "body", noAutoIcon = true, fit = barFit })
 			x = x + bw + GAP
 		else
 			x = x + 10
 		end
 	end
-	-- Docked bar: show tips / messages in the empty space after the buttons,
-	-- clear of the game's own icons in the bottom-left corner
+
 	UI.tipsInToolbar = false
 	local tipW = W - x - 16
 	if (not L and tipW > 160) then
@@ -3513,10 +3356,6 @@ function UI.buildToolbar()
 		end)
 	end
 end
-
----------------------------------------------------------------------------
--- Status bar
----------------------------------------------------------------------------
 
 local function contextHint()
 	local G = MS.G
@@ -3578,7 +3417,7 @@ function UI.buildStatus()
 	end)
 	local textEl = bar:addChild({ pos = { 10, 0 }, size = { W - 190, SH } })
 	textEl:addCustomDisplay(true, function(init)
-		-- Tips live in the top bar when it's docked
+
 		if (init or UI.tipsInToolbar) then return end
 		local s, isToast = UI.statusText()
 		textEl:uiText(s or "", nil, nil, 4, LEFTMID, UI.textSize("body") * UI.textK, nil, nil, isToast and { 1, 0.9, 0.45, 1 } or nil)
@@ -3592,10 +3431,6 @@ function UI.buildStatus()
 		countEl:uiText(s, nil, nil, 4, RIGHTMID, UI.textSize("small") * UI.textK)
 	end)
 end
-
----------------------------------------------------------------------------
--- Help overlay
----------------------------------------------------------------------------
 
 UI.HELP = {
 	{ "Getting around", true },
@@ -3638,7 +3473,6 @@ UI.HELP = {
 	{ "Tip", "Drag any field's label left/right to change it" }
 }
 
--- Anything (re)built after the help/dialog would draw over it, so push them back on top after every rebuild
 for _, name in ipairs({ "buildDock", "buildToolbar", "buildStatus" }) do
 	local build = UI[name]
 	UI[name] = function(...)
@@ -3648,8 +3482,6 @@ for _, name in ipairs({ "buildDock", "buildToolbar", "buildStatus" }) do
 	end
 end
 
----Re-queues the help and dialog overlays so they draw (and take the mouse) above anything built after them.
----toriui draws in show order and hands the mouse to the last shown element; hide + show moves an element to the end.
 function UI.raiseOverlays()
 	for _, el in ipairs({ UI.tourFrame, UI.tour, UI.help, UI.dialog }) do
 		if (el and not el.destroyed) then
@@ -3671,7 +3503,6 @@ function UI.toggleHelp(force)
 	end
 	if (UI.help) then UI.help:kill() end
 
-	-- Free space between the top bar and the bottom dock / status bar
 	local top = UI.toolbar and not UI.toolbar.destroyed and (UI.toolbar.pos.y + UI.toolbar.size.h) or 0
 	local bottom = WIN_H
 	if (UI.status and not UI.status.destroyed and UI.status.pos.y > WIN_H / 2) then bottom = UI.status.pos.y end
@@ -3684,8 +3515,6 @@ function UI.toggleHelp(force)
 	local rows = UI.HELP
 	local bodyTop = UI.textSize("body") * UI.textK
 
-	-- Row heights for a column count / base row height. A description that doesn't fit on one line
-	-- gets a taller row so the text wraps onto a second line instead of being cut off.
 	local function plan(c, rh)
 		local pW = math.min(c == 1 and 560 or 1000, WIN_W - 40)
 		local pColW = (pW - 4) / c
@@ -3761,7 +3590,7 @@ function UI.toggleHelp(force)
 		UI.toggleHelp()
 		if (UI.tourStart) then UI.tourStart() end
 	end, { tip = "A step-by-step look at the main features" })
-	-- Black text would vanish on the dark buttons
+
 	for _, b in ipairs({ btn, tourBtn }) do
 		b.uiColor = { 1, 1, 1, 1 }
 		for _, c in ipairs(b.child) do c.uiColor = b.uiColor end
@@ -3769,11 +3598,6 @@ function UI.toggleHelp(force)
 	UI.raiseOverlays()
 end
 
----------------------------------------------------------------------------
--- Confirm dialog
----------------------------------------------------------------------------
-
----buttons = { { text, fn }, ... } - a button without fn just closes
 function UI.confirm(title, message, buttons)
 	if (UI.dialog) then UI.dialog:kill() end
 	UI.modalOpen = true
@@ -3784,7 +3608,7 @@ function UI.confirm(title, message, buttons)
 	})
 	UI.dialog = shade
 	local W = math.min(420, WIN_W - 40)
-	-- Grow the message area until the whole (wrapped) message fits, so nothing is cut off
+
 	local msgH = 50
 	local probe = shade:addChild({ pos = { 0, 0 }, size = { W - 32, msgH } })
 	local sc = UI.textSize("body") * UI.textK
@@ -3810,7 +3634,6 @@ function UI.confirm(title, message, buttons)
 	end
 end
 
----Asks for a line of text. onOk(text) runs on OK / Enter.
 function UI.prompt(title, initial, onOk, okLabel)
 	if (UI.dialog) then UI.dialog:kill() end
 	UI.modalOpen = true
@@ -3832,7 +3655,7 @@ function UI.prompt(title, initial, onOk, okLabel)
 		onOk(text)
 	end
 	f = field(inner, 14, 42, W - 32, 28, initial or "", { align = LEFTMID, enter = ok })
-	-- Start typing straight away, with the cursor at the end
+
 	pcall(function()
 		f.textfieldindex = string.len(f.textfieldstr[1])
 		f.keyboard = true
@@ -3846,7 +3669,6 @@ function UI.prompt(title, initial, onOk, okLabel)
 	end)
 end
 
----Rename box for the given node keys (default: the selection)
 function UI.renameNodes(keys)
 	if (not keys) then
 		local _, list = MS.selKeys()
@@ -3867,10 +3689,6 @@ function UI.closeDialog()
 	UI.dialog = nil
 	UI.modalOpen = false
 end
-
----------------------------------------------------------------------------
--- Test mode
----------------------------------------------------------------------------
 
 function UI.enterTest()
 	MS.flush(true)
@@ -3905,14 +3723,10 @@ function UI.exitTest()
 	for _, el in ipairs(UI.roots()) do
 		if (el and not el.destroyed and el ~= UI.testBar) then el:show() end
 	end
-	MS.markDirty() -- rebuild the world, but leaving test mode is not an edit
+	MS.markDirty()
 	MS.changed, MS.changedSinceAutosave = wasChanged, wasAuto
 	UI.requestRefresh()
 end
-
----------------------------------------------------------------------------
--- Open / close
----------------------------------------------------------------------------
 
 function UI.open()
 	WIN_W, WIN_H = get_window_size()
@@ -3943,13 +3757,13 @@ function UI.tick()
 		UI.lastPurge = nowClock
 		UI.purgeKeyboardHandlers()
 	end
-	-- Models tab open: look at data/mod_assets every couple of seconds so dropped-in files show up
+
 	if (not MS.testMode and MS.libPoll and UI.isTabOpen("models")) then
 		local ok, changed = pcall(MS.libPoll, false)
 		if (ok and changed) then UI.filterDirty = true end
 	end
 	if (UI.filterDirty) then
-		-- Rebuilding while typing would steal focus from the search box, so wait until it loses focus
+
 		if (not UI.fieldFocused()) then
 			UI.filterDirty = false
 			UI.needRefresh = true

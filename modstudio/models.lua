@@ -1,18 +1,4 @@
--- Mod Studio: per-object 3D models and asset tools
---
--- How Toribash does it (verified in data/mod/*.tbm + the game exe strings):
---   * An env_obj block can carry "use_model 1" and "model_name <path>".
---   * The model file is data/mod_assets/<modname>/<model_name>.obj, where <modname> is the mod's path
---     under data/mod without ".tbm" (the exe has the format "data/mod_assets/%s/%s.obj").
---     So a mod at data/mod/bowling_noki.tbm writes "../Noki/bowling" for data/mod_assets/Noki/bowling.obj,
---     and data/mod/system/events/holeinthewall6.tbm writes "../../../events/sakura".
---     Mod Studio exports to data/mod/modmaker/<name>.tbm, so its paths start with "../../".
---   * The mod maker API has no per-object model field, so Mod Studio keeps the model in the object's
---     metadata (meta.useModel / meta.modelName = path under data/mod_assets, no extension), previews it
---     with load_obj + draw_obj_m, and adds the two lines to the exported .tbm after export_mod_maker.
---   * The engine draws the model with its origin at the object's position, rotated by the object's
---     rotation and scaled per axis by the object's "sides" (bowling_noki: pin sides 0.2 0.2 0.75 sit exactly
---     on the lane because 0.75 * model z-min -0.491 + pos z 0.72 = 0.352 = lane top).
+
 
 local MS = MS
 local V, M = MS.V, MS.M
@@ -21,10 +7,6 @@ local clock = MS.clock
 
 MS.ASSET_ROOT = "data/mod_assets"
 local ROOT = MS.ASSET_ROOT
-
----------------------------------------------------------------------------
--- File helpers (io.open with root = true starts at the Toribash folder)
----------------------------------------------------------------------------
 
 local function openRoot(path, mode)
 	local ok, f = pcall(io.open, path, mode, true)
@@ -38,7 +20,6 @@ function MS.fileExists(path)
 	return false
 end
 
----Whole file as a string (binary safe), or nil
 function MS.readBytes(path)
 	local f = openRoot(path, "rb")
 	if (not f) then return nil end
@@ -48,8 +29,6 @@ function MS.readBytes(path)
 	return nil
 end
 
----Writes a whole file (binary). Returns true on success. Callers must check the file doesn't exist
----first when they must not overwrite: "wb" truncates.
 function MS.writeBytes(path, data)
 	local f = openRoot(path, "wb")
 	if (not f) then return false end
@@ -67,12 +46,6 @@ end
 local function baseName(path) return (tostring(path):gsub("\\", "/"):match("([^/]*)$")) end
 local function dirName(path) return (tostring(path):gsub("\\", "/"):match("^(.*)/[^/]*$")) or "" end
 
----------------------------------------------------------------------------
--- Model names: canonical = path under data/mod_assets without ".obj" ("Noki/bowling").
--- model_name in the .tbm is that path relative to data/mod_assets/<modname>/.
----------------------------------------------------------------------------
-
----Tidies what a user typed or the picker gave: slashes, no .obj, no "data/mod_assets/" prefix
 function MS.cleanModelName(s)
 	s = tostring(s or ""):gsub("^%s+", ""):gsub("%s+$", ""):gsub("\\", "/")
 	s = s:gsub("^[Dd]ata/[Mm]od_assets/", ""):gsub("^[Mm]od_assets/", ""):gsub("^/+", "")
@@ -80,8 +53,6 @@ function MS.cleanModelName(s)
 	return s
 end
 
----Folders between data/mod_assets and the mod. For a file name like "modmaker/Foo.tbm" it's { "modmaker", "Foo" }.
----With no name (not exported yet) Mod Studio's own export location is assumed.
 function MS.modBaseSegs(fullName)
 	local depth = tonumber(MS.settings.modelDepth) or 2
 	if (fullName and fullName ~= "") then
@@ -93,7 +64,6 @@ function MS.modBaseSegs(fullName)
 	return { name }
 end
 
----"../Noki/bowling" (as written in a .tbm) -> "Noki/bowling". Returns nil, reason when it climbs out of mod_assets.
 function MS.resolveModelName(rel, baseSegs)
 	local stack = {}
 	for _, s in ipairs(baseSegs or {}) do table.insert(stack, s) end
@@ -109,12 +79,11 @@ function MS.resolveModelName(rel, baseSegs)
 	return table.concat(stack, "/")
 end
 
----"Noki/bowling" -> "../../Noki/bowling" for a mod whose assets folder is baseSegs
 function MS.relativeModelName(canon, baseSegs)
 	if (not canon or canon == "") then return "" end
 	local segs = splitPath(canon)
 	for _, s in ipairs(segs) do
-		-- Already relative / unresolved (imported with a path we couldn't place): keep exactly as written
+
 		if (s == ".." or s == ".") then return canon end
 	end
 	local c = 0
@@ -126,7 +95,6 @@ function MS.relativeModelName(canon, baseSegs)
 	return table.concat(out, "/")
 end
 
----Reasons a stored model name won't load (nil = fine)
 function MS.modelNameProblem(name)
 	if (not name or name == "") then return "no model chosen" end
 	if (name:find("\\", 1, true)) then return "uses backslashes (use /)" end
@@ -138,11 +106,6 @@ function MS.modelNameProblem(name)
 	return nil
 end
 
----------------------------------------------------------------------------
--- Finding .obj files under data/mod_assets
----------------------------------------------------------------------------
-
----Every .obj under data/mod_assets as "folder/name" (no extension), sorted. Cheap: only directory listings.
 local function listObjFiles()
 	local out, seen, visited = {}, 0, {}
 	local function walk(dir, rel, depth)
@@ -157,14 +120,13 @@ local function listObjFiles()
 					if (v:lower():match("%.obj$")) then
 						table.insert(out, rel .. v:sub(1, -5))
 					elseif (not v:match("%.%w+$")) then
-						-- No is_folder() here: called on a file it crashes the game (it closes a dir handle
-						-- that failed to open). Folders with a dot in their name come from get_folders below.
+
 						subs[v] = true
 					end
 				end
 			end
 		end
-		-- The game can list folders directly; this also finds folders get_files leaves out
+
 		if (get_folders) then
 			local okf, folders = pcall(get_folders, dir)
 			if (okf and type(folders) == "table") then
@@ -180,10 +142,6 @@ local function listObjFiles()
 	return out
 end
 
----------------------------------------------------------------------------
--- Reading an .obj: bounds, UVs, material file and textures
----------------------------------------------------------------------------
-
 MS.objCache = MS.objCache or {}
 
 local function texturesFromMtl(mtlText)
@@ -192,7 +150,7 @@ local function texturesFromMtl(mtlText)
 	for line in mtlText:gmatch("[^\r\n]+") do
 		local key, rest = line:match("^%s*(%S+)%s+(.-)%s*$")
 		if (key and rest and (key:lower():find("^map_") or key == "bump" or key == "decal" or key == "disp")) then
-			-- Options (-s 1 1 1) come first; the file is the last token
+
 			local file = rest:match("(%S+)$")
 			if (file) then table.insert(list, (file:gsub("\\", "/"))) end
 		end
@@ -200,8 +158,6 @@ local function texturesFromMtl(mtlText)
 	return list
 end
 
----Info about data/mod_assets/<name>.obj, cached for a few seconds:
----{ missing, min, max, center, ext, verts, hasUV, files = { existing paths }, absent = { missing paths }, textures, mtl }
 function MS.objInfo(name, force)
 	local c = MS.objCache[name]
 	if (c and not force and clock() - c.t < 15) then return c end
@@ -248,7 +204,6 @@ function MS.objInfo(name, force)
 	local prefix = ROOT .. "/" .. (dir ~= "" and (dir .. "/") or "")
 	table.insert(info.files, info.path)
 
-	-- Textures named by the .mtl (when that file exists); the game also looks for <name>.tga next to the model
 	local refs = {}
 	if (info.mtl) then
 		local mtlPath = prefix .. info.mtl
@@ -288,10 +243,6 @@ function MS.objInfo(name, force)
 	return info
 end
 
----------------------------------------------------------------------------
--- Per-object model state (stored in MS.meta so undo, copy/paste, prefabs and projects carry it)
----------------------------------------------------------------------------
-
 function MS.objModel(idx)
 	local m = MS.meta[idx]
 	if (not m) then return false, "" end
@@ -301,10 +252,9 @@ end
 local function touch()
 	MS.changed = true
 	MS.changedSinceAutosave = true
-	-- Only metadata changed: the game's world doesn't need a rebuild
+
 end
 
----Sets the model for a list of object indices. `use` / `name` may be nil to leave that part alone.
 function MS.setObjModels(list, use, name)
 	for _, idx in ipairs(list) do
 		if (MS.objs[idx]) then
@@ -335,12 +285,7 @@ function MS.modelUsers()
 	return users, order
 end
 
----------------------------------------------------------------------------
--- Editor preview: load_obj once per path, draw_obj_m at the object's pose.
--- Slots (0..127) are shared with the game's own UI model cache, so we register in it.
----------------------------------------------------------------------------
-
-MS.modelSlots = MS.modelSlots or {}   -- canonical name -> { slot, file } | { failed = time }
+MS.modelSlots = MS.modelSlots or {}
 local MAX_PREVIEW_MODELS = 16
 
 local function uiCache()
@@ -349,7 +294,6 @@ local function uiCache()
 	return _G.UIElement3DModelCache
 end
 
----One echo per model name when it can't be loaded for the preview
 function MS.modelDiag(name, why)
 	MS.modelDiagDone = MS.modelDiagDone or {}
 	if (MS.modelDiagDone[name]) then return end
@@ -409,7 +353,6 @@ function MS.modelSlot(name)
 	return slot
 end
 
----Releases one preview model (or all of them). Called on close and when the file changes.
 function MS.unloadModels(name)
 	local cache = uiCache()
 	for n, rec in pairs(MS.modelSlots) do
@@ -439,7 +382,6 @@ local function rotTB(R)
 	return t
 end
 
----Scale the game applies to a model: the object's sides per axis (box: full size; ball: radius)
 function MS.modelScale(idx)
 	local o = MS.objs[idx]
 	local x, y, z = o.dims_x, o.dims_y, o.dims_z
@@ -448,12 +390,6 @@ function MS.modelScale(idx)
 	local k = MS.sizeK()
 	return { (x or 1) * k, (y or x or 1) * k, (z or x or 1) * k }
 end
-
----------------------------------------------------------------------------
--- Test mode: the game's objects move with physics, so models follow the LIVE objects.
--- Which game object is which mod object is found by position + size on the first test frames
--- (the n-th game object is normally the n-th mod object).
----------------------------------------------------------------------------
 
 local function testPosNear(i, o)
 	local ok, x, y, z = pcall(get_obj_pos, i)
@@ -495,10 +431,9 @@ local function buildTestMap(T)
 	end
 end
 
----Called from the draw3d hook every frame. live = true in test mode.
 function MS.drawModels(live)
 	if (not MS.settings.modelPreview or not draw_obj_m) then
-		-- Preview off: give the plain boxes back
+
 		if (not live and MS.modelBoxHidden and next(MS.modelBoxHidden)) then
 			local old = MS.modelBoxHidden
 			MS.modelBoxHidden = {}
@@ -532,8 +467,7 @@ function MS.drawModels(live)
 			if (o and o.visible ~= false) then
 				local slot = MS.modelSlot(m.modelName)
 				if (slot) then
-					-- The engine draws the object's own opaque box, which would cover the model: make it
-					-- invisible in the editor only (see MS.syncHidden; export / test / close restore it)
+
 					if (want and not MS.modelProblem) then want[idx] = true end
 					local s = MS.modelScale(idx)
 					local x, y, z, R = o.pos_x or 0, o.pos_y or 0, o.pos_z or 0, nil
@@ -544,16 +478,14 @@ function MS.drawModels(live)
 							x, y, z = px, py, pz
 							R = MS.readEngineRot and MS.readEngineRot(w) or nil
 						end
-						-- The game draws the model instead of the plain shape: hide the shape (live object only)
+
 						if (not T.hidden[idx]) then
 							T.hidden[idx] = true
 							pcall(set_obj_color, w, o.color_r or 1, o.color_g or 1, o.color_b or 1, 0)
 						end
 					end
 					R = R or MS.objRot(idx)
-					-- Same call sequence as toriui/uielement3d.lua (set_color, then draw_obj_m): the engine's load_obj loads the
-					-- model's textures (<name>.tga next to the .obj) itself; there is no Lua call to bind one, so the colour
-					-- here is the only thing that can tint it (white = texture as is).
+
 					set_color(o.color_r or 1, o.color_g or 1, o.color_b or 1, o.color_a or 1)
 					local ok = pcall(draw_obj_m, slot, x, y, z, s[1], s[2], s[3], rotTB(R))
 					if (not ok) then
@@ -579,11 +511,6 @@ function MS.drawModels(live)
 	end
 end
 
----------------------------------------------------------------------------
--- Sizing: model <-> hitbox
----------------------------------------------------------------------------
-
----Scale + centre the game will draw for the model on this object: world centre and full world extents of its bounding box
 function MS.modelWorldBox(idx)
 	local m = MS.meta[idx]
 	if (not m or not m.modelName) then return nil, "Pick a model first" end
@@ -597,7 +524,6 @@ function MS.modelWorldBox(idx)
 	return { center = c, ext = { info.ext[1] * s[1], info.ext[2] * s[2], info.ext[3] * s[3] }, R = R, info = info, scale = s }
 end
 
----Sets the model scale (the object's size) and moves the object so the model's centre stays where it is
 function MS.setModelScale(list, k)
 	MS.pushUndo("Model scale", "model:scale")
 	local n = 0
@@ -617,14 +543,13 @@ function MS.setModelScale(list, k)
 			n = n + 1
 		end
 	end
-	-- A fitted hitbox follows the new size
+
 	for _, idx in ipairs(list) do
 		if (n > 0 and MS.modelHitbox(idx)) then MS.modelRefitHitbox(idx) end
 	end
 	return n
 end
 
----True when the model is about 1 unit big, so the object's own box (sides 1 1 1) already fits it
 function MS.modelIsUnit(idx)
 	local m = MS.meta[idx]
 	local info = m and m.modelName and MS.objInfo(m.modelName)
@@ -632,7 +557,6 @@ function MS.modelIsUnit(idx)
 	return abs(info.ext[1] - 1) < 0.15 and abs(info.ext[2] - 1) < 0.15 and abs(info.ext[3] - 1) < 0.15
 end
 
----The fitted hitbox object that belongs to a model object (or nil)
 function MS.modelHitbox(idx)
 	for j, mj in pairs(MS.meta) do
 		if (mj.hitboxFor == idx and MS.objs[j]) then return j end
@@ -650,7 +574,6 @@ local function hitboxFields(idx, box)
 	}
 end
 
----Re-fits an existing hitbox to the model (after a size change)
 function MS.modelRefitHitbox(idx)
 	local h = MS.modelHitbox(idx)
 	local box = MS.modelWorldBox(idx)
@@ -658,7 +581,6 @@ function MS.modelRefitHitbox(idx)
 	for f, v in pairs(hitboxFields(idx, box)) do MS.objSet(h, f, v) end
 end
 
----Deletes the fitted hitbox of a model object. Returns true when one was removed.
 function MS.modelRemoveHitbox(idx)
 	local h = MS.modelHitbox(idx)
 	if (not h) then return false end
@@ -671,9 +593,6 @@ function MS.modelRemoveHitbox(idx)
 	return true
 end
 
----Adds an invisible static box exactly around the drawn model (child of the object) - one undo step.
----The model is scaled by the object's own size, so the object's own box can't also be the model's hitbox
----unless the model is about 1 unit big (then nothing needs adding). quiet: no toasts, keep the selection.
 function MS.modelAddHitbox(idx, quiet)
 	local box, why = MS.modelWorldBox(idx)
 	if (not box) then if (not quiet) then MS.toast(why) end return nil end
@@ -706,12 +625,6 @@ function MS.modelAddHitbox(idx, quiet)
 	return newIdx
 end
 
----------------------------------------------------------------------------
--- Adding / swapping / removing models on objects
----------------------------------------------------------------------------
-
----One undo step: a static object at the spawn point showing the model at its original size (object sides 1 1 1),
----with the fitted invisible hitbox. Selects the new object.
 function MS.addModelToScene(name)
 	name = MS.cleanModelName(name)
 	local bad = MS.modelNameProblem(name)
@@ -722,7 +635,7 @@ function MS.addModelToScene(name)
 	local newIdx
 	MS.withUndo("Add " .. short, function()
 		local p = MS.spawnPoint()
-		-- Model origin sits at the object's position: lift it so the model's lowest point touches the floor
+
 		local z = info.min and -info.min[3] or 0.5
 		newIdx = MS.createObj({
 			type = 1, pos_x = p[1], pos_y = p[2], pos_z = z, dims_x = 1, dims_y = 1, dims_z = 1,
@@ -736,7 +649,6 @@ function MS.addModelToScene(name)
 	return newIdx
 end
 
----Swaps the model of the given objects (one undo step)
 function MS.useModelOn(list, name)
 	name = MS.cleanModelName(name)
 	if (#list == 0) then MS.toast("Select an object first") return false end
@@ -750,7 +662,6 @@ function MS.useModelOn(list, name)
 	return true
 end
 
----Takes the model (and its fitted hitbox) off the given objects (one undo step)
 function MS.removeModelFrom(list)
 	if (#list == 0) then return end
 	MS.withUndo("Remove model", function()
@@ -759,12 +670,6 @@ function MS.removeModelFrom(list)
 	end)
 	MS.toast("Model removed")
 end
-
----------------------------------------------------------------------------
--- Live model library (the Models tab): data/mod_assets is re-listed every ~2 s while the tab is open.
--- A listing is cheap; an .obj is only parsed again when it is new or its file size changed
--- (get_files gives no timestamps, so the size is the change signal).
----------------------------------------------------------------------------
 
 MS.lib = MS.lib or { entries = {}, byName = {}, t = -100, rev = 0 }
 local LIB_PARSES_PER_POLL = 3
@@ -777,7 +682,6 @@ local function fileSize(path)
 	return ok and tonumber(n) or nil
 end
 
----Is a texture for model `name` there now (<stem>.tga / .png next to it)?
 local function textureNow(name)
 	local dir = dirName(name)
 	local prefix = ROOT .. "/" .. (dir ~= "" and (dir .. "/") or "")
@@ -785,8 +689,6 @@ local function textureNow(name)
 	return MS.fileExists(prefix .. stem .. ".tga") or MS.fileExists(prefix .. stem .. ".png")
 end
 
----Looks at data/mod_assets again. Returns true when the list or something in it changed.
----force skips the 2 second wait.
 function MS.libPoll(force)
 	local L = MS.lib
 	local now = clock()
@@ -803,13 +705,13 @@ function MS.libPoll(force)
 		if (not e or e.size ~= size or e.pending) then
 			reparse = true
 		elseif (e.info and e.info.hasUV and not e.info.hasTexture and textureNow(n)) then
-			reparse = true -- the texture arrived after the model
+			reparse = true
 		end
 		if (reparse) then
 			if (parsed < LIB_PARSES_PER_POLL) then
 				parsed = parsed + 1
 				if (e and e.info and e.size ~= size) then
-					-- A model that is loaded for the preview must be loaded again
+
 					pcall(MS.unloadModels, n)
 				end
 				local info = MS.objInfo(n, true)
@@ -831,7 +733,6 @@ function MS.libPoll(force)
 	return changed
 end
 
----One line about a library entry: size and texture state
 function MS.libInfoLine(e)
 	local info = e.info
 	if (not info) then return "reading..." end
@@ -847,10 +748,6 @@ function MS.libInfoLine(e)
 	else table.insert(parts, "no texture needed") end
 	return table.concat(parts, "  |  ")
 end
-
----------------------------------------------------------------------------
--- Export: write use_model / model_name into the .tbm, import: read them back
----------------------------------------------------------------------------
 
 local function splitLines(text)
 	local lines, pos = {}, 1
@@ -874,8 +771,6 @@ local function tbmPath(written)
 end
 MS.tbmPath = tbmPath
 
----The mod's path under data/mod without .tbm, as the game knows it ("modmaker/Name"). export_mod_maker's
----return value may or may not include the modmaker/ folder, so look for the file.
 function MS.normExport(written)
 	local w = tostring(written or ""):gsub("\\", "/"):gsub("%.[Tt][Bb][Mm]$", "")
 	if (not MS.fileExists("data/mod/" .. w .. ".tbm") and MS.fileExists("data/mod/modmaker/" .. w .. ".tbm")) then
@@ -884,7 +779,6 @@ function MS.normExport(written)
 	return w
 end
 
----Adds use_model 1 / model_name to the env_obj blocks of an exported mod. Returns patched count, error text.
 function MS.writeModelLines(written)
 	local want = {}
 	local total = 0
@@ -919,7 +813,7 @@ function MS.writeModelLines(written)
 			if (n) then cur = want[tonumber(n)] end
 			table.insert(out, line)
 		elseif (cur and (line:match("^%s+use_model%s") or line:match("^%s+model_name%s"))) then
-			-- replaced by the lines added at the end of the block
+
 		else
 			table.insert(out, line)
 		end
@@ -933,7 +827,6 @@ function MS.writeModelLines(written)
 	return patched
 end
 
----Reads use_model / model_name for every env_obj of a .tbm and stores them on the objects that were just imported
 function MS.readModelLines(name)
 	local text = MS.readBytes(tbmPath(name))
 	if (not text) then return 0 end
@@ -970,13 +863,8 @@ function MS.readModelLines(name)
 	return found
 end
 
----------------------------------------------------------------------------
--- Asset report: everything the mod needs, problems, cached for a few seconds
----------------------------------------------------------------------------
-
 MS.assetCache = MS.assetCache or nil
 
----{ order = { names }, users, infos, issues = { {severity,text,objs} }, files = { paths }, missing = { paths } }
 function MS.assetReport(force)
 	local users, order = MS.modelUsers()
 	local key = {}
@@ -1031,16 +919,11 @@ function MS.assetReport(force)
 	return rep
 end
 
----Issues for MS.checkMod
 function MS.assetIssues(force)
 	local ok, rep = pcall(MS.assetReport, force)
 	if (ok and rep) then return rep.issues end
 	return {}
 end
-
----------------------------------------------------------------------------
--- Mod message note, manifest, asset pack
----------------------------------------------------------------------------
 
 local NOTE_A = "This mod needs these assets: "
 local NOTE_B = "Download the mod's 3D assets"
@@ -1053,7 +936,6 @@ local function stripNote(msg)
 	return msg
 end
 
----Adds (or replaces) an asset note at the end of the welcome message. kind: "list" or "download"
 function MS.appendAssetNote(kind)
 	local rep = MS.assetReport(true)
 	if (#rep.order == 0) then MS.toast("No 3D models in use - nothing to mention") return false end
@@ -1083,7 +965,6 @@ function MS.removeAssetNote()
 	MS.toast("Removed the asset note from the welcome message")
 end
 
----Writes data/mod/<folder>/<Name>_assets.txt next to the exported mod. Returns path or nil, error.
 function MS.writeManifest(written)
 	local rep = MS.assetReport(true)
 	if (#rep.order == 0) then return nil, "no models" end
@@ -1112,7 +993,6 @@ function MS.writeManifest(written)
 	return path
 end
 
----Everything that happens after export_mod_maker succeeded. Returns a short text for the toast.
 function MS.afterExport(written)
 	local parts = {}
 	local ok, patched, err = pcall(MS.writeModelLines, written)
@@ -1133,8 +1013,6 @@ function MS.afterExport(written)
 	return table.concat(parts, ", ")
 end
 
----Copies the files of every used model into data/mod_assets/<folder>/ (never overwriting), then points the
----objects at the copies. Returns a list of report lines. The folder must already exist: Lua can't create folders.
 function MS.makeAssetPack(folder)
 	local rep = MS.assetReport(true)
 	local log = {}
@@ -1203,7 +1081,6 @@ function MS.makeAssetPack(folder)
 	return log
 end
 
----True when the game's Lua can read and write binary files (desktop io.open); mobile builds only get the list
 function MS.canBinaryCopy()
 	if (is_mobile) then
 		local ok, m = pcall(is_mobile)

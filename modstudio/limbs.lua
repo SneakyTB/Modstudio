@@ -1,13 +1,4 @@
--- Mod Studio: adding, connecting, renaming and removing extra limbs (Toribash 5.78+)
---
--- The game has no Lua call that creates a body part or joint on a fighter. Its own
--- Mod Maker (Alt + M) does it in C++, and its .tbm export / import already round-trip
--- extra limbs ("env_obj 0", then "body name" / "joint name" with "connect parent child").
--- So every limb change here is: export what's in the mod maker to a scratch file, edit the
--- limb lines of each fighter, import the file back. Names, groups, triangles and models of
--- objects are kept (they're stored by object index, which the round trip doesn't change).
---
--- The text editing part (MS.Limbs.*) is pure Lua so tests/test_limbs.py can run it offline.
+
 
 local MS = MS
 local L = {}
@@ -15,7 +6,6 @@ MS.Limbs = L
 
 L.TEMP = "modstudio_limbs_temp"
 
--- Names the .tbm format uses for the classic parts, by index
 L.CLASSIC_BODIES = {
 	[0] = "head", "breast", "chest", "stomach", "groin",
 	"r_pecs", "r_biceps", "r_triceps", "l_pecs", "l_biceps", "l_triceps",
@@ -28,14 +18,14 @@ L.CLASSIC_JOINTS = {
 	"r_wrist", "l_wrist", "r_glute", "l_glute",
 	"r_hip", "l_hip", "r_knee", "l_knee", "r_ankle", "l_ankle"
 }
--- The two bodies each classic joint holds when it isn't re-wired (from the engine's classic table)
+
 L.CLASSIC_PAIRS = {
 	[0] = { 1, 0 }, { 1, 2 }, { 2, 3 }, { 4, 3 },
 	{ 5, 1 }, { 6, 5 }, { 7, 6 }, { 1, 8 }, { 8, 9 }, { 9, 10 },
 	{ 11, 7 }, { 10, 12 }, { 13, 4 }, { 4, 14 },
 	{ 15, 13 }, { 16, 14 }, { 18, 15 }, { 17, 16 }, { 19, 18 }, { 17, 20 }
 }
-L.ROOT_BODY = 4 -- groin: every body must stay joined to it
+L.ROOT_BODY = 4
 
 local function indexOf(list, name)
 	for i = 0, #list do
@@ -46,16 +36,10 @@ end
 function L.classicBody(name) return indexOf(L.CLASSIC_BODIES, name) end
 function L.classicJoint(name) return indexOf(L.CLASSIC_JOINTS, name) end
 
----Part names may use letters, digits, _ and -, up to 31 characters (the game's own rule)
 function L.validName(name)
 	return type(name) == "string" and #name >= 1 and #name <= 31 and not name:find("[^%w_%-]")
 end
 
----------------------------------------------------------------------------
--- Parsing a .tbm into fighters and blocks
----------------------------------------------------------------------------
-
----Splits text into lines (drops \r) and remembers the line ending
 local function splitLines(text)
 	local eol = text:find("\r\n", 1, true) and "\r\n" or "\n"
 	local lines = {}
@@ -66,8 +50,6 @@ local function splitLines(text)
 	return lines, eol
 end
 
----Parses a .tbm: { head = {lines before the first fighter...}, items = { {player=n, blocks}, {raw lines}... } }
----Each fighter is a list of blocks: { kind = "body"|"joint"|"env0"|"raw", name, lines = { ... } }
 function L.parse(text)
 	local lines, eol = splitLines(text or "")
 	local doc = { eol = eol, items = {} }
@@ -87,7 +69,7 @@ function L.parse(text)
 			table.insert(doc.items, cur)
 			block = nil
 		elseif (cur and line:match("^%S") and not line:match("^#")) then
-			-- Unindented line: the fighter's section is over
+
 			cur, block = nil, nil
 			rawItem(line)
 		elseif (cur) then
@@ -99,7 +81,7 @@ function L.parse(text)
 				block = { kind = "env0", lines = { line } }
 				table.insert(cur.blocks, block)
 			elseif (line:match("^%s*#") or line:match("^%s*$")) then
-				-- Comments / blank lines stand on their own so they never move with a part
+
 				block = nil
 				table.insert(cur.blocks, { kind = "raw", lines = { line } })
 			elseif (block) then
@@ -137,8 +119,6 @@ function L.fighters(doc)
 	return t
 end
 
----Fighter q's section, made (empty, after the other fighters) when the file has none.
----The game's export leaves out a fighter that is still classic, so a fresh mod has no "player" lines at all.
 function L.fighter(doc, q)
 	local f = L.fighters(doc)[q]
 	if (f) then return f end
@@ -151,7 +131,6 @@ function L.fighter(doc, q)
 	return f
 end
 
----The `connect` line of a block, if any: parent, child, line index
 local function connectOf(b)
 	for i = 2, #b.lines do
 		local a, c = b.lines[i]:match("^%s+connect%s+(%S+)%s+(%S+)")
@@ -166,7 +145,6 @@ local function isExtra(kind, name)
 	return L.classicJoint(name) == nil
 end
 
----Extra part names of a fighter in file order: bodies, joints
 function L.extraNames(f)
 	local bodies, joints, seen = {}, {}, {}
 	for _, b in ipairs(f.blocks) do
@@ -178,7 +156,6 @@ function L.extraNames(f)
 	return bodies, joints
 end
 
----Every joint of a fighter with the bodies it joins, by name: { name = {parent, child} }
 function L.connections(f)
 	local t = {}
 	for j = 0, #L.CLASSIC_JOINTS do
@@ -194,7 +171,6 @@ function L.connections(f)
 	return t
 end
 
----Names of every body of a fighter (classic + extra)
 function L.bodySet(f)
 	local s = {}
 	for i = 0, #L.CLASSIC_BODIES do s[L.CLASSIC_BODIES[i]] = true end
@@ -203,7 +179,6 @@ function L.bodySet(f)
 	return s
 end
 
----Bodies that can't reach the groin through `conns` (ignoring `skipBodies`)
 function L.cutOff(f, conns, skipBodies)
 	skipBodies = skipBodies or {}
 	local bodies = L.bodySet(f)
@@ -231,10 +206,6 @@ function L.cutOff(f, conns, skipBodies)
 	return lost
 end
 
----------------------------------------------------------------------------
--- Editing one fighter
----------------------------------------------------------------------------
-
 local IND1, IND2 = "   ", "      "
 
 local function num(v)
@@ -245,12 +216,11 @@ end
 local function vec(v) return num(v[1]) .. " " .. num(v[2]) .. " " .. num(v[3]) end
 L.num = num
 
----Where the extra limbs start (the first "env_obj 0" of the fighter), adding it if missing
 local function extrasStart(f)
 	for i, b in ipairs(f.blocks) do
 		if (b.kind == "env0") then return i end
 	end
-	-- Drop trailing blank lines so the new section sits right under the classic parts
+
 	while (#f.blocks > 0 and f.blocks[#f.blocks].kind == "raw" and f.blocks[#f.blocks].lines[1]:match("^%s*$")) do
 		table.remove(f.blocks)
 	end
@@ -259,7 +229,6 @@ local function extrasStart(f)
 	return #f.blocks
 end
 
----Index after the last extra block of `kind` (or after `fallback`)
 local function afterLast(f, kind, fallback)
 	local at = fallback
 	for i = fallback + 1, #f.blocks do
@@ -277,7 +246,6 @@ function L.hasPart(f, kind, name)
 	return L.classicJoint(name) ~= nil
 end
 
----Adds a body. spec = { name, pos = {x,y,z}, sides = {x,y,z}, density, shape }
 function L.addBody(f, spec)
 	local start = extrasStart(f)
 	local b = { kind = "body", name = spec.name, lines = { IND1 .. "body " .. spec.name } }
@@ -288,7 +256,6 @@ function L.addBody(f, spec)
 	table.insert(f.blocks, afterLast(f, "body", start), b)
 end
 
----Adds a joint. spec = { name, parent, child, pos, axis, radius, range = {hi, lo}, strength, velocity }
 function L.addJoint(f, spec)
 	local start = extrasStart(f)
 	local at = afterLast(f, "body", start)
@@ -307,7 +274,6 @@ function L.addJoint(f, spec)
 	table.insert(f.blocks, at, b)
 end
 
----Re-wires a joint. parent = nil puts a classic joint back on its classic bodies.
 function L.connect(f, jointName, parent, child)
 	local done = false
 	for i = #f.blocks, 1, -1 do
@@ -326,7 +292,7 @@ function L.connect(f, jointName, parent, child)
 		end
 	end
 	if (parent and not done) then
-		-- A classic joint that wasn't re-wired yet: put the block just before the extra limbs
+
 		local at = #f.blocks + 1
 		for i, b in ipairs(f.blocks) do
 			if (b.kind == "env0") then
@@ -341,7 +307,6 @@ function L.connect(f, jointName, parent, child)
 	end
 end
 
----Renames an extra part and every connect line that names it
 function L.rename(f, kind, old, new)
 	for _, b in ipairs(f.blocks) do
 		if (b.kind == kind and b.name == old) then
@@ -357,8 +322,6 @@ function L.rename(f, kind, old, new)
 	end
 end
 
----Removes an extra joint, or an extra body with the extra joints that hold it
----(classic joints re-wired to it get their classic bodies back). Returns the joints removed.
 function L.remove(f, kind, name)
 	local gone = {}
 	for i = #f.blocks, 1, -1 do
@@ -376,7 +339,7 @@ function L.remove(f, kind, name)
 		end
 	end
 	if (kind == "body") then
-		-- Classic joints that held it go back to their classic bodies
+
 		local conns = L.connections(f)
 		for j = 0, #L.CLASSIC_JOINTS do
 			local jn = L.CLASSIC_JOINTS[j]
@@ -387,17 +350,12 @@ function L.remove(f, kind, name)
 	return gone
 end
 
----------------------------------------------------------------------------
--- Engine side: export -> edit -> import, with undo
----------------------------------------------------------------------------
-
----The game's export never overwrites: it adds (0), (1)... to the name. Removes our scratch files.
 local function cleanTemp(also)
 	if (type(delete_mod) ~= "function") then return end
 	local names = { "modmaker/" .. L.TEMP .. ".tbm" }
 	for i = 0, 9 do table.insert(names, "modmaker/" .. L.TEMP .. "(" .. i .. ").tbm") end
 	if (also) then table.insert(names, also) end
-	-- Only files that are there: the game logs an error for every missing one
+
 	for _, n in ipairs(names) do
 		if (not MS.fileExists or MS.fileExists("data/mod/" .. n)) then pcall(delete_mod, n) end
 	end
@@ -418,7 +376,6 @@ local function exportText()
 	return text
 end
 
----Loads .tbm text into the mod maker, keeping object names, groups, triangles and models
 local function importText(text)
 	local written = "modmaker/" .. L.TEMP .. ".tbm"
 	if (not MS.writeBytes("data/mod/" .. written, text)) then return false, "couldn't write the scratch file" end
@@ -439,7 +396,6 @@ function L.supported()
 		and type(export_mod_maker) == "function" and type(import_mod_into_maker) == "function"
 end
 
----Which fighters a limb change goes to
 function L.targets(p)
 	if (MS.settings.limbsOnePlayer) then return { p } end
 	local t = {}
@@ -447,8 +403,6 @@ function L.targets(p)
 	return t
 end
 
----Runs edit(fighter, p) on the chosen fighters of an exported copy of the mod, then loads it.
----edit returns nil to skip that fighter, or an error message to stop. check(p) says if it worked.
 function L.apply(label, p, edit, check)
 	if (not L.supported()) then
 		MS.toast("Adding limbs needs Toribash 5.78 or newer")
@@ -503,7 +457,6 @@ function L.apply(label, p, edit, check)
 	return true, changed, skipped
 end
 
--- Resetting drops extra limbs, which a snapshot can't bring back: remember the file text too
 local origReset = MS.resetTo
 if (origReset) then
 	function MS.resetTo(what, onDone)
@@ -525,7 +478,6 @@ if (origReset) then
 	end
 end
 
--- Undo / redo of a limb change loads the file text from before / after it
 local origUndo, origRedo = MS.undo, MS.redo
 function MS.undo()
 	local e = MS.undoStack[#MS.undoStack]
@@ -533,7 +485,7 @@ function MS.undo()
 	table.remove(MS.undoStack)
 	importText(e.limbBefore)
 	if (e.fresh and e.snap) then
-		-- Object names, groups and triangles from before the reset
+
 		MS.meta, MS.tris, MS.nextTri = MS.deepcopy(e.snap.meta or {}), MS.deepcopy(e.snap.tris or {}), e.snap.nextTri or MS.nextTri
 		for idx in pairs(MS.meta) do if (not MS.objs[idx]) then MS.meta[idx] = nil end end
 	end
@@ -548,7 +500,7 @@ function MS.redo()
 	if (not (e and e.limbAfter)) then return origRedo() end
 	table.remove(MS.redoStack)
 	if (e.fresh) then
-		-- Redoing a reset: run it again (loading text on top can't take extra limbs away)
+
 		local redo = MS.redoStack
 		MS.resetTo(e.resetWhat or "all")
 		MS.redoStack = redo
@@ -562,7 +514,6 @@ function MS.redo()
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
 
--- Jumping through history over a limb change goes one step at a time
 local origUndoTo, origRedoTo = MS.undoTo, MS.redoTo
 if (origUndoTo) then
 	function MS.undoTo(k)
@@ -587,7 +538,6 @@ if (origRedoTo) then
 	end
 end
 
--- Keep the scratch file out of the mod lists
 local origListMods = MS.listMods
 if (origListMods) then
 	function MS.listMods()
@@ -599,11 +549,6 @@ if (origListMods) then
 	end
 end
 
----------------------------------------------------------------------------
--- Names <-> indices for the current fighters
----------------------------------------------------------------------------
-
----The .tbm name of body / joint index i of fighter p
 function L.fileName(kind, p, i)
 	local classic = kind == "body" and L.CLASSIC_BODIES or L.CLASSIC_JOINTS
 	if (classic[i]) then return classic[i] end
@@ -619,7 +564,6 @@ local function fv(o, prefix)
 	return { o and o[prefix .. "_x"] or 0, o and o[prefix .. "_y"] or 0, o and o[prefix .. "_z"] or 0 }
 end
 
----Free name like base1, base2... over every fighter of the file
 local function freeName(doc, kind, base)
 	local used = {}
 	for _, f in pairs(L.fighters(doc)) do
@@ -633,7 +577,6 @@ local function freeName(doc, kind, base)
 end
 L.freeName = freeName
 
----Suggested names for a new body / joint
 function L.suggestNames()
 	local text = exportText()
 	local doc = text and L.parse(text) or { items = {} }
@@ -646,7 +589,6 @@ local function countsOk(p, db, dj, before)
 	end
 end
 
----Adds a new body on body b of fighter p, held by a new joint
 function L.addBodyOn(p, b, bodyName, jointName)
 	local parent = L.fileName("body", p, b)
 	if (not parent) then MS.toast("Couldn't find that body's name in the mod"); return false end
@@ -654,7 +596,7 @@ function L.addBodyOn(p, b, bodyName, jointName)
 		MS.toast("Names use letters, digits, _ and -, up to 31 characters.")
 		return false
 	end
-	-- Place it just outside the parent, away from the middle of the fighter
+
 	local po = MS.bodies[p] and MS.bodies[p][b]
 	local ppos, psides = fv(po, "pos"), fv(po, "sides")
 	local c, n = { 0, 0, 0 }, 0
@@ -671,14 +613,14 @@ function L.addBodyOn(p, b, bodyName, jointName)
 	local size = 0.15
 	local jpos = { ppos[1] + d[1] * reach, ppos[2] + d[2] * reach, ppos[3] + d[3] * reach }
 	local bpos = { jpos[1] + d[1] * size / 2, jpos[2] + d[2] * size / 2, jpos[3] + d[3] * size / 2 }
-	-- Hinge across the direction it sticks out
+
 	local axis = math.abs(d[3]) > 0.7 and { 1, 0, 0 } or { 0, 0, 1 }
 	local before = { b = MS.numBodies(p), j = MS.numJoints(p) }
 	local ok, changed, skipped = L.apply("Add body " .. bodyName, p, function(f, q)
 		if (not L.hasPart(f, "body", parent)) then return false end
 		if (L.hasPart(f, "body", bodyName)) then return (q == p) and (bodyName .. " already exists") or false end
 		if (L.hasPart(f, "joint", jointName)) then return (q == p) and (jointName .. " already exists") or false end
-		-- Other fighters get the part at the same spot relative to their own copy of the parent
+
 		local off = { 0, 0, 0 }
 		local qo = MS.bodies[q] and MS.bodies[q][b]
 		if (q ~= p and qo and po) then off = { (qo.pos_x or 0) - ppos[1], (qo.pos_y or 0) - ppos[2], (qo.pos_z or 0) - ppos[3] } end
@@ -694,7 +636,6 @@ function L.addBodyOn(p, b, bodyName, jointName)
 	return ok
 end
 
----Adds a joint between two existing bodies (parent moves child)
 function L.addJointBetween(p, b1, b2, jointName)
 	if (b1 == b2) then MS.toast("A joint connects two different bodies: choose the parent and the child."); return false end
 	local parent, child = L.fileName("body", p, b1), L.fileName("body", p, b2)
@@ -726,7 +667,6 @@ function L.addJointBetween(p, b1, b2, jointName)
 	return ok
 end
 
----Re-wires joint j so it connects b1 (parent) and b2 (child). b1 = nil: classic bodies again.
 function L.reconnect(p, j, b1, b2)
 	local jn = L.fileName("joint", p, j)
 	if (not jn) then MS.toast("Couldn't find that joint's name in the mod"); return false end
@@ -766,7 +706,6 @@ function L.reconnect(p, j, b1, b2)
 	return ok
 end
 
----Renames extra body / joint i of fighter p on every chosen fighter
 function L.renamePart(kind, p, i, new)
 	local old = L.fileName(kind, p, i)
 	if (not old) then MS.toast("Couldn't find that part's name in the mod"); return false end
@@ -783,7 +722,6 @@ function L.renamePart(kind, p, i, new)
 	return ok
 end
 
----Removes extra body / joint i of fighter p (a body takes the joints that hold it along)
 function L.removePart(kind, p, i)
 	local name = L.fileName(kind, p, i)
 	if (not name) then MS.toast("Couldn't find that part's name in the mod"); return false end
@@ -791,7 +729,7 @@ function L.removePart(kind, p, i)
 	local removedJoints = {}
 	local ok = L.apply("Remove " .. name, p, function(f, q)
 		if (not L.hasPart(f, kind, name)) then return false end
-		-- Check nothing else would come loose
+
 		local conns = L.connections(f)
 		local skip = {}
 		if (kind == "joint") then
@@ -824,13 +762,6 @@ function L.removePart(kind, p, i)
 	return ok
 end
 
----------------------------------------------------------------------------
--- Editing extra parts. The game's get_mod_body / set_mod_body (and _joint) answer
--- "index out of range" for extra limbs, so their values come from the .tbm and edits
--- go back through it: queued while you work, written when you let go / stop typing.
----------------------------------------------------------------------------
-
--- .tbm line -> Mod Studio fields (in order), and defaults for a missing line
 L.BODY_LINES = {
 	{ "pos", { "pos_x", "pos_y", "pos_z" }, { 0, 0, 0 } },
 	{ "rot", { "rot_x", "rot_y", "rot_z" }, { 0, 0, 0 } },
@@ -852,7 +783,6 @@ for _, d in ipairs(L.BODY_LINES) do for _, f in ipairs(d[2]) do LINE_OF.body[f] 
 for _, d in ipairs(L.JOINT_LINES) do for _, f in ipairs(d[2]) do LINE_OF.joint[f] = d end end
 L.LINE_OF = LINE_OF
 
----Field table for a part's block: { pos_x = , ... } (defaults for lines it doesn't have)
 function L.readFields(block, kind)
 	local o = {}
 	for _, d in ipairs(kind == "body" and L.BODY_LINES or L.JOINT_LINES) do
@@ -872,7 +802,6 @@ function L.readFields(block, kind)
 	return o
 end
 
----Writes the lines named in `keys` ({ pos = true, ... }) from field table `o` into the block
 function L.writeFields(block, kind, o, keys)
 	for _, d in ipairs(kind == "body" and L.BODY_LINES or L.JOINT_LINES) do
 		local key = d[1]
@@ -889,7 +818,6 @@ function L.writeFields(block, kind, o, keys)
 	end
 end
 
----The last block of a part in a fighter (later lines win in the game too)
 local function blockOf(f, kind, name)
 	local found
 	for _, b in ipairs(f.blocks) do
@@ -899,15 +827,14 @@ local function blockOf(f, kind, name)
 end
 L.blockOf = blockOf
 
-L.parts = L.parts or {}     -- ["p:kind:i"] = name, for extra parts filled from the file
-L.pending = L.pending or {} -- ["p:kind:i"] = { p, kind, i, keys = { line keys } }
+L.parts = L.parts or {}
+L.pending = L.pending or {}
 
 local function isFilePart(kind, p, i)
 	return L.parts[p .. ":" .. kind .. ":" .. i] ~= nil
 end
 L.isFilePart = isFilePart
 
----Fills MS.bodies / MS.joints for the extra parts from the .tbm text
 function L.syncFromText(text)
 	L.parts = {}
 	if (not text) then return end
@@ -938,7 +865,6 @@ local function anyExtras()
 	return false
 end
 
--- After every re-read, fill in the extra parts (from the text just loaded, or a fresh export)
 local origReload = MS.reloadAll
 function MS.reloadAll(...)
 	origReload(...)
@@ -977,7 +903,6 @@ function MS.jointSet(p, j, f, v)
 	MS.changed, MS.changedSinceAutosave, MS.lastEditClock = true, true, MS.clock()
 end
 
----Writes every queued extra-part edit to the mod in one go
 function L.commit()
 	if (not next(L.pending)) then return end
 	local pending = L.pending
@@ -1009,7 +934,6 @@ function L.commit()
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
 
----Writes queued edits once you let go of the gizmo and stop typing for a moment
 function L.tick()
 	if (not next(L.pending)) then return end
 	if (MS.G and MS.G.drag) then return end
@@ -1026,7 +950,6 @@ if (MS.UI and MS.UI.tick) then
 	end
 end
 
--- Saving and exporting write queued edits first
 for _, fnName in ipairs({ "exportMod", "saveProject" }) do
 	local orig = MS[fnName]
 	if (orig) then
@@ -1037,13 +960,8 @@ for _, fnName in ipairs({ "exportMod", "saveProject" }) do
 	end
 end
 
----------------------------------------------------------------------------
--- UI: body picker dialog + entries for the Bodies and Joints tabs
----------------------------------------------------------------------------
-
 local UI = MS.UI
 
----Shows every body of fighter p as buttons; onPick(b) runs on a click
 function L.pickBody(title, p, onPick, disabled)
 	if (not UI) then return end
 	if (UI.dialog) then UI.dialog:kill() end
@@ -1095,7 +1013,6 @@ local function unsupportedHint()
 	return { kind = "hint", rows = 2, label = "Adding body parts and joints needs Toribash 5.78 or newer." }
 end
 
----Flow: name the new body and joint, then add them on body b
 function L.uiAddBodyOn(p, b)
 	local bn, jn = L.suggestNames()
 	UI.prompt("Name the new body (on " .. MS.bodyName(p, b) .. ")", bn, function(bodyName)
@@ -1106,7 +1023,6 @@ function L.uiAddBodyOn(p, b)
 	end, "Next")
 end
 
----Flow: pick parent, pick child, name the joint
 function L.uiAddJoint(p, parentB)
 	local function withParent(b1)
 		L.pickBody("Child body (the one " .. MS.bodyName(p, b1) .. " moves)", p, function(b2)
@@ -1139,7 +1055,6 @@ local function confirmRemove(kind, p, i)
 	})
 end
 
----Entries for the "Limbs" section of the Bodies tab
 function L.bodyEntries(p, b)
 	if (not L.supported()) then return { unsupportedHint() } end
 	local extra = b >= MS.NUM_BODIES
@@ -1159,7 +1074,6 @@ function L.bodyEntries(p, b)
 	}
 end
 
----Entries for the "Limbs" section of the Joints tab
 function L.jointEntries(p, j)
 	if (not L.supported()) then return { unsupportedHint() } end
 	local extra = j >= MS.NUM_JOINTS

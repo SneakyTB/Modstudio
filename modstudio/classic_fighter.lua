@@ -1,5 +1,5 @@
--- The classic fighter as an untouched Toribash 5.78 game has it (raw get_mod_body / get_mod_joint values).
--- Reset writes these back: loading a mod copies the game's built-in fighter, and edits can end up in it.
+
+
 return {
 	[0] = { bodies = {
 		[0] = { type = 0, pos_x = 1, pos_y = 0.850000024, pos_z = 2.6500001, rot_x = 0, rot_y = 0, rot_z = 0, sides_x = 0.200000003, sides_y = 0, sides_z = 0, altsides_x = 0, altsides_y = 0, altsides_z = 0, force_x = 0, force_y = 0, force_z = 0, density = 0.25, hardness = 1, friction = 0.300000012, bounce = 0.100000001, thrust_frames = 0, thrust_x = 0, thrust_y = 0, thrust_z = 0, thrust_relative = false, trig_id = 0, trig_mask = 0, trig_action = 0, trig_sound = 0, trig_color_r = 0, trig_color_g = 0, trig_color_b = 0, trig_color_a = 0, trig_score = 0, trig_scoreonce = false },

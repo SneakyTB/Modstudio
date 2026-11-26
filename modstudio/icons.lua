@@ -1,7 +1,4 @@
--- Mod Studio: icons
--- Small vector icons drawn with the game's 2D draw calls, so there are no image
--- files to ship and they scale with the "UI size" setting and follow the theme.
--- Every icon is drawn into a square of side s centred on (cx, cy).
+
 
 local MS = MS
 MS.UI = MS.UI or {}
@@ -12,13 +9,10 @@ local sin, cos, rad, floor = math.sin, math.cos, math.rad, math.floor
 local Icons = {}
 UI.Icons = Icons
 
--- Primitives -------------------------------------------------------------
-
 local function quad(x, y, w, h) pcall(draw_quad, floor(x + 0.5), floor(y + 0.5), w, h) end
 local function dot(x, y, r) pcall(draw_disk, x, y, 0, r, 16, 1, 0, 360, 0) end
 local function ring(x, y, r, w) pcall(draw_disk, x, y, math.max(0, r - w / 2), r + w / 2, 28, 1, 0, 360, 0) end
 
----Line with round ends so joined segments don't leave gaps
 local function line(x1, y1, x2, y2, w)
 	pcall(draw_line, x1, y1, x2, y2, w)
 	if (w > 1.5) then
@@ -32,7 +26,6 @@ local function poly(pts, w, closed)
 	if (closed and #pts > 2) then line(pts[#pts][1], pts[#pts][2], pts[1][1], pts[1][2], w) end
 end
 
----Ellipse arc. Angles in degrees, 0 = right, 90 = down (screen space)
 local function arcPts(cx, cy, rx, ry, a0, a1, seg)
 	seg = seg or 14
 	local pts = {}
@@ -44,7 +37,6 @@ local function arcPts(cx, cy, rx, ry, a0, a1, seg)
 end
 local function arc(cx, cy, rx, ry, a0, a1, w, seg) poly(arcPts(cx, cy, rx, ry, a0, a1, seg), w) end
 
----Filled triangle, drawn as 1px horizontal strips
 local function tri(ax, ay, bx, by, cx, cy)
 	local p = { { ax, ay }, { bx, by }, { cx, cy } }
 	table.sort(p, function(a, b) return a[2] < b[2] end)
@@ -63,22 +55,18 @@ local function tri(ax, ay, bx, by, cx, cy)
 	end
 end
 
----Arrow head at (x, y) pointing along angle a (degrees)
 local function head(x, y, a, len, w)
 	local l, r = rad(a + 150), rad(a - 150)
 	line(x, y, x + cos(l) * len, y + sin(l) * len, w)
 	line(x, y, x + cos(r) * len, y + sin(r) * len, w)
 end
 
--- Icons ------------------------------------------------------------------
--- Each: function(cx, cy, s, w) where w is the stroke width
-
 local function eye(cx, cy, s, w)
 	local a, b = s * 0.46, s * 0.27
 	local R = (a * a + b * b) / (2 * b)
 	local phi = math.deg(math.asin(a / R))
-	arc(cx, cy - b + R, R, R, -90 - phi, -90 + phi, w)  -- upper lid
-	arc(cx, cy + b - R, R, R, 90 - phi, 90 + phi, w)    -- lower lid
+	arc(cx, cy - b + R, R, R, -90 - phi, -90 + phi, w)
+	arc(cx, cy + b - R, R, R, 90 - phi, 90 + phi, w)
 	dot(cx, cy, s * 0.14)
 end
 
@@ -94,7 +82,7 @@ local function padlock(cx, cy, s, w, open)
 	quad(cx - bw / 2, top, bw, bh)
 	local r = s * 0.19
 	local sy = open and top - s * 0.14 or top
-	-- Shackle: arc over the top, legs down into the body (open: right leg lifted out)
+
 	arc(cx, sy - s * 0.12, r, r, 180, 360, w)
 	line(cx - r, sy - s * 0.12, cx - r, top + 1, w)
 	if (open) then
@@ -122,7 +110,7 @@ Icons.close = function(cx, cy, s, w)
 end
 
 Icons.trash = function(cx, cy, s, w)
-	line(cx - s * 0.36, cy - s * 0.26, cx + s * 0.36, cy - s * 0.26, w)              -- lid
+	line(cx - s * 0.36, cy - s * 0.26, cx + s * 0.36, cy - s * 0.26, w)
 	poly({ { cx - s * 0.1, cy - s * 0.26 }, { cx - s * 0.1, cy - s * 0.38 }, { cx + s * 0.1, cy - s * 0.38 }, { cx + s * 0.1, cy - s * 0.26 } }, w)
 	poly({ { cx - s * 0.27, cy - s * 0.16 }, { cx - s * 0.22, cy + s * 0.4 }, { cx + s * 0.22, cy + s * 0.4 }, { cx + s * 0.27, cy - s * 0.16 } }, w)
 	line(cx, cy - s * 0.06, cx, cy + s * 0.28, math.max(1, w * 0.8))
@@ -144,10 +132,8 @@ Icons.resize = function(cx, cy, s, w)
 	end
 end
 
--- Toolbar
-
 Icons.select = function(cx, cy, s, w)
-	-- Mouse pointer: arrow head plus a short tail
+
 	local x, y = cx - s * 0.18, cy - s * 0.4
 	tri(x, y, x, y + s * 0.6, x + s * 0.43, y + s * 0.45)
 	line(x + s * 0.17, y + s * 0.45, x + s * 0.3, y + s * 0.76, w * 1.3)
@@ -170,7 +156,7 @@ Icons.rotate = function(cx, cy, s, w)
 end
 
 Icons.scale = function(cx, cy, s, w)
-	-- Small box growing into a big dashed corner
+
 	local x0, y0 = cx - s * 0.38, cy + s * 0.38
 	quad(x0, y0 - s * 0.34, s * 0.34, s * 0.34)
 	poly({ { x0, y0 - s * 0.76 }, { x0 + s * 0.76, y0 - s * 0.76 }, { x0 + s * 0.76, y0 } }, math.max(1, w * 0.8))
@@ -179,7 +165,7 @@ Icons.scale = function(cx, cy, s, w)
 end
 
 Icons.measure = function(cx, cy, s, w)
-	-- Ruler
+
 	local x0, x1, y = cx - s * 0.42, cx + s * 0.42, cy + s * 0.12
 	line(x0, y, x1, y, w)
 	for i = 0, 6 do
@@ -197,7 +183,7 @@ Icons.world = function(cx, cy, s, w)
 end
 
 Icons["local"] = function(cx, cy, s, w)
-	-- Cube in perspective
+
 	local f, o = s * 0.5, s * 0.2
 	local x0, y0 = cx - s * 0.36, cy - s * 0.18
 	poly({ { x0, y0 }, { x0 + f, y0 }, { x0 + f, y0 + f }, { x0, y0 + f } }, w, true)
@@ -225,7 +211,7 @@ Icons.grid = function(cx, cy, s, w)
 end
 
 Icons.stick = function(cx, cy, s, w)
-	-- Horseshoe magnet, poles down, with gaps marking the pole tips
+
 	local r = s * 0.24
 	local y = cy - s * 0.04
 	local t = w * 1.3
@@ -239,8 +225,8 @@ end
 Icons.undo = function(cx, cy, s, w)
 	local r = s * 0.28
 	local y = cy + s * 0.08
-	arc(cx, y, r, r, -90, 90, w, 12)                         -- right half circle
-	line(cx - s * 0.26, y - r, cx, y - r, w)                 -- top, back to the arrow head
+	arc(cx, y, r, r, -90, 90, w, 12)
+	line(cx - s * 0.26, y - r, cx, y - r, w)
 	line(cx, y + r, cx - s * 0.1, y + r, w)
 	head(cx - s * 0.26, y - r, 180, s * 0.18, w)
 end
@@ -282,8 +268,6 @@ Icons.pencil = function(cx, cy, s, w)
 	tri(cx - d - s * 0.06, cy + d + s * 0.06, cx - d + s * 0.13, cy + d + s * 0.01, cx - d - s * 0.01, cy + d - s * 0.13)
 end
 
--- Objects / actions
-
 Icons.copy = function(cx, cy, s, w)
 	local d = s * 0.44
 	poly({ { cx - s * 0.36 + d * 0.35, cy - s * 0.36 }, { cx - s * 0.36, cy - s * 0.36 }, { cx - s * 0.36, cy - s * 0.36 + d } , { cx - s * 0.36 + d * 0.35, cy - s * 0.36 + d } }, w)
@@ -303,8 +287,6 @@ Icons.cylinder = function(cx, cy, s, w)
 	line(cx - rx, cy - h / 2, cx - rx, cy + h / 2, w)
 	line(cx + rx, cy - h / 2, cx + rx, cy + h / 2, w)
 end
-
--- More object / file icons
 
 Icons.tri = function(cx, cy, s, w)
 	poly({ { cx - s * 0.36, cy + s * 0.3 }, { cx + s * 0.36, cy + s * 0.3 }, { cx, cy - s * 0.34 } }, w, true)
@@ -401,8 +383,6 @@ Icons.gear = function(cx, cy, s, w)
 	end
 end
 
--- Shapes, generators and body icons
-
 Icons.slab = function(cx, cy, s, w)
 	poly({ { cx - s * 0.4, cy + s * 0.14 }, { cx - s * 0.2, cy - s * 0.14 }, { cx + s * 0.4, cy - s * 0.14 }, { cx + s * 0.2, cy + s * 0.14 } }, w, true)
 end
@@ -472,16 +452,12 @@ Icons.joint = function(cx, cy, s, w)
 	ring(cx, cy, s * 0.13, w)
 end
 
--- Drawing ----------------------------------------------------------------
-
----Icon colour for a button: dark on a bright (active) background, light otherwise
 function UI.iconColor(bg, disabled)
 	local lum = bg and (bg[1] * 0.3 + bg[2] * 0.59 + bg[3] * 0.11) or 0
 	local c = lum > 0.72 and { 0.12, 0.08, 0.08 } or { 1, 1, 1 }
 	return c[1], c[2], c[3], disabled and 0.35 or 0.95
 end
 
----Draws the named icon into a w x h box at (x, y). Unknown names draw nothing.
 function UI.drawIcon(name, x, y, w, h, r, g, b, a)
 	local fn = Icons[name]
 	if (not fn) then return end
@@ -490,13 +466,9 @@ function UI.drawIcon(name, x, y, w, h, r, g, b, a)
 	fn(x + w / 2, y + h / 2, s, math.max(1.2, s / 9))
 end
 
----Adds an icon on top of an element.
----o: bg (background colour, picks a dark icon on bright buttons), disabled, dim (fainter, for "off" states),
----   box = { x, y, w, h } inside the element (default: the whole element)
 function UI.addIcon(el, name, o)
 	o = o or {}
-	-- On its own (non-interactive) child: an element has one custom display slot and
-	-- addAdaptedText uses it for the label
+
 	local bx = o.box or { 0, 0, el.size.w, el.size.h }
 	local holder = el:addChild({ pos = { bx[1], bx[2] }, size = { bx[3], bx[4] } })
 	local r, g, b, a = UI.iconColor(o.bg, o.disabled)

@@ -1,15 +1,4 @@
--- Mod Studio: parent / child hierarchy
---
--- Any object or triangle can be the parent of any number of children. Moving,
--- rotating or scaling a parent carries its whole branch along (the "Children
--- follow parent" setting turns that off). Positions stay in world space, so
--- un-parenting never moves anything and exported .tbm files are unchanged:
--- the hierarchy is an editing aid, saved in Mod Studio project files.
---
--- A "node" is a plain object ("o<index>") or a whole triangle ("t<id>").
--- Each node can carry a stable `uid` (kept in MS.meta for objects, in the
--- triangle table for triangles) and a `parent` uid. Engine indices change
--- on undo / project load, uids don't, so nothing needs remapping.
+
 
 local MS = MS
 local V, M = MS.V, MS.M
@@ -17,11 +6,6 @@ local abs = math.abs
 
 MS.nextUid = MS.nextUid or 1
 
----------------------------------------------------------------------------
--- Nodes
----------------------------------------------------------------------------
-
----Node key of the object at engine index `idx` (triangle slices map to their triangle)
 function MS.nodeKey(idx)
 	if (idx == nil) then return nil end
 	local m = MS.meta[idx]
@@ -35,7 +19,6 @@ local function parseKey(key)
 end
 MS.parseNodeKey = parseKey
 
----The table holding a node's uid / parent (meta for objects, the triangle itself)
 function MS.nodeData(key)
 	local kind, n = parseKey(key)
 	if (kind == "t") then return MS.tris[n] end
@@ -52,14 +35,12 @@ function MS.nodeExists(key)
 	return MS.objs[n] ~= nil
 end
 
----Engine indices that make up a node
 function MS.nodeObjs(key)
 	local kind, n = parseKey(key)
 	if (kind == "t") then return MS.tris[n] and MS.tris[n].objs or {} end
 	return MS.objs[n] and { n } or {}
 end
 
----One engine index that stands for the node (for selecting / sorting)
 function MS.nodeRep(key)
 	return MS.nodeObjs(key)[1]
 end
@@ -73,8 +54,6 @@ function MS.nodeName(key)
 	return MS.objName(n)
 end
 
----Names objects / triangles. Several at once get "Name 1", "Name 2"...
----in scene order. An empty name puts the default name back.
 function MS.renameNodes(keys, name)
 	if (#keys == 0) then return end
 	name = tostring(name or ""):gsub("^%s+", ""):gsub("%s+$", "")
@@ -102,8 +81,6 @@ function MS.nodePos(key)
 	return MS.objPos(n)
 end
 
----Position + orientation of a node. Triangles use a frame built from their corners
----so it stays stable under any rigid move.
 function MS.nodeFrame(key)
 	local kind, n = parseKey(key)
 	if (kind == "t") then
@@ -121,7 +98,6 @@ function MS.nodeFrame(key)
 	return { pos = MS.objPos(n), R = MS.objRot(n) }
 end
 
----Gives the node a uid if it has none yet and returns it
 function MS.ensureUid(key)
 	local d = MS.nodeData(key)
 	if (not d) then return nil end
@@ -138,10 +114,6 @@ function MS.newUid()
 	return u
 end
 
----------------------------------------------------------------------------
--- Hierarchy index (rebuilt on demand - it's cheap)
----------------------------------------------------------------------------
-
 local function orderOf(key)
 	return MS.nodeRep(key) or math.huge
 end
@@ -152,7 +124,6 @@ local function sortKeys(list)
 end
 MS.sortNodeKeys = sortKeys
 
----Builds { keys, byUid, parent = {child -> parent key}, children = {key -> list}, roots }
 function MS.hier()
 	local H = { keys = {}, byUid = {}, parent = {}, children = {}, roots = {} }
 	for idx in pairs(MS.objs) do
@@ -174,7 +145,7 @@ function MS.hier()
 		local pk = d and d.parent and H.byUid[d.parent]
 		if (pk and pk ~= key) then H.parent[key] = pk end
 	end
-	-- Never let a loop survive (only possible with a hand-edited project)
+
 	for _, key in ipairs(H.keys) do
 		local seen, p = { [key] = true }, H.parent[key]
 		while (p) do
@@ -199,7 +170,6 @@ function MS.hier()
 	return H
 end
 
----All descendants of `key` (depth first), appended to `out`
 function MS.descendants(key, H, out)
 	out = out or {}
 	for _, c in ipairs(H.children[key] or {}) do
@@ -209,7 +179,6 @@ function MS.descendants(key, H, out)
 	return out
 end
 
----True if `a` sits somewhere below `b`
 function MS.isBelow(a, b, H)
 	local p = H.parent[a]
 	while (p) do
@@ -219,8 +188,6 @@ function MS.isBelow(a, b, H)
 	return false
 end
 
----Removes references to parents that no longer exist, drops duplicate uids
----and moves the uid counter past everything in use. Call after bulk changes.
 function MS.hierFix()
 	local seen, maxUid = {}, 0
 	local datas = {}
@@ -228,7 +195,7 @@ function MS.hierFix()
 		if (MS.objs[idx] and not (m.tri and MS.tris[m.tri])) then
 			table.insert(datas, m)
 		elseif (m.tri) then
-			-- Slices belong to their triangle; they never carry their own links
+
 			m.uid, m.parent = nil, nil
 		end
 	end
@@ -249,11 +216,6 @@ function MS.hierFix()
 	MS.nextUid = math.max(MS.nextUid or 1, maxUid + 1)
 end
 
----------------------------------------------------------------------------
--- Selection helpers
----------------------------------------------------------------------------
-
----Set of selected node keys + the list in scene order
 function MS.selKeys()
 	local set, list = {}, {}
 	for _, idx in ipairs(MS.selList()) do
@@ -266,7 +228,6 @@ function MS.selKeys()
 	return set, sortKeys(list)
 end
 
----The set plus every descendant of anything in it
 function MS.withDescendants(set, H)
 	local out = {}
 	for key in pairs(set) do
@@ -276,7 +237,6 @@ function MS.withDescendants(set, H)
 	return out
 end
 
----Same shape as MS.selSplit(): set of triangle ids, sorted list of plain indices
 function MS.splitKeys(set)
 	local tris, plain = {}, {}
 	for key in pairs(set) do
@@ -295,8 +255,6 @@ function MS.childrenFollow()
 	return MS.settings == nil or MS.settings.moveChildren ~= false
 end
 
----Like MS.selSplit() but also includes the children of everything selected
----(when "Children follow parent" is on). Used by every move / rotate / scale.
 function MS.selSplitFamily()
 	if (not MS.childrenFollow()) then return MS.selSplit() end
 	local set = MS.selKeys()
@@ -319,10 +277,6 @@ local function selectKeys(keys, primaryKey)
 end
 MS.selectNodeKeys = selectKeys
 
----------------------------------------------------------------------------
--- Moving nodes
----------------------------------------------------------------------------
-
 local function isIdentity(Q)
 	if (not Q) then return true end
 	for i = 1, 3 do
@@ -333,7 +287,6 @@ local function isIdentity(Q)
 	return true
 end
 
----Rigid transform of one node: p -> pivot + Q (p - pivot) + d
 function MS.transformNode(key, pivot, Q, d)
 	local rot = not isIdentity(Q)
 	local function tp(p)
@@ -352,8 +305,6 @@ function MS.transformNode(key, pivot, Q, d)
 	end
 end
 
----Makes every descendant that isn't in `xf` follow the change of its closest
----ancestor that is. xf: key -> { pivot, Q, d }
 function MS.followTransforms(xf, H)
 	if (not MS.childrenFollow() or next(xf) == nil) then return end
 	H = H or MS.hier()
@@ -372,8 +323,6 @@ function MS.followTransforms(xf, H)
 	end
 end
 
----Runs `fn` (an operation that only touches the selection itself) and then
----carries the children of every node it moved or turned along with it.
 function MS.withChildrenFollowing(fn, ...)
 	if (not MS.childrenFollow()) then return fn(...) end
 	local H = MS.hier()
@@ -384,8 +333,7 @@ function MS.withChildrenFollowing(fn, ...)
 	end
 	local results = { fn(...) }
 	if (next(before) ~= nil) then
-		-- Every selected node is an entry so its children follow it (or stay put
-		-- with it) instead of following an ancestor further up
+
 		local xf, any = {}, false
 		for key in pairs(set) do
 			local x = { pivot = { 0, 0, 0 }, Q = M.identity(), d = { 0, 0, 0 } }
@@ -406,11 +354,6 @@ function MS.withChildrenFollowing(fn, ...)
 	return (table.unpack or unpack)(results)
 end
 
----------------------------------------------------------------------------
--- Parenting
----------------------------------------------------------------------------
-
----Makes `parentKey` the parent of every key in `childKeys`. Returns how many changed.
 function MS.setParent(childKeys, parentKey)
 	local H = MS.hier()
 	local puid = parentKey and MS.ensureUid(parentKey) or nil
@@ -435,7 +378,6 @@ function MS.setParent(childKeys, parentKey)
 	return n, refused
 end
 
----Parents everything selected to the primary (last clicked) object. Ctrl+P style.
 function MS.parentSelection(parentKey)
 	parentKey = parentKey or MS.nodeKey(MS.primary)
 	if (not parentKey) then
@@ -472,7 +414,6 @@ function MS.parentSelection(parentKey)
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
 
----Clears the parent of every selected node (they keep their place in the world)
 function MS.unparentSelection()
 	local H = MS.hier()
 	local _, list = MS.selKeys()
@@ -490,7 +431,6 @@ function MS.unparentSelection()
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
 
----Unlinks the direct children of the selection (they become top level / move up a level)
 function MS.releaseChildren()
 	local H = MS.hier()
 	local set, list = MS.selKeys()
@@ -540,7 +480,6 @@ function MS.selectParent()
 	MS.toast("Selected parent: " .. MS.nodeName(out[1]) .. (#out > 1 and (" (+" .. (#out - 1) .. ")") or ""))
 end
 
----Selects the children of the selection. `all`: every descendant, keeping the selection.
 function MS.selectChildren(all)
 	local H = MS.hier()
 	local set, list = MS.selKeys()
@@ -570,7 +509,6 @@ function MS.selectChildren(all)
 	MS.toast(all and ("Selected the whole branch (" .. #out .. " items)") or ("Selected " .. found .. " child" .. (found == 1 and "" or "ren")))
 end
 
----Before deleting `set`: children that survive move up to the closest surviving ancestor
 function MS.hierBeforeDelete(set)
 	local H = MS.hier()
 	for _, key in ipairs(H.keys) do
@@ -583,7 +521,6 @@ function MS.hierBeforeDelete(set)
 	end
 end
 
----Deletes the selection together with all of its children
 function MS.deleteBranch()
 	local set = MS.selKeys()
 	if (next(set) == nil) then
@@ -596,7 +533,6 @@ function MS.deleteBranch()
 	MS.deleteSelected()
 end
 
----Turns a group name into a hierarchy: everything in the group becomes a child of the primary
 function MS.groupToParent()
 	local m = MS.meta[MS.primary]
 	local g = m and m.group
@@ -625,7 +561,6 @@ function MS.groupToParent()
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
 
----Short description of the primary's place in the hierarchy (for the Info tab)
 function MS.hierSummary()
 	local key = MS.nodeKey(MS.primary)
 	if (not key) then return "Nothing selected" end
@@ -638,10 +573,6 @@ function MS.hierSummary()
 	if (all > kids) then s = s .. " (" .. all .. " in the whole branch)" end
 	return s
 end
-
----------------------------------------------------------------------------
--- Children follow the selection-only tools too
----------------------------------------------------------------------------
 
 for _, name in ipairs({ "dropToFloor", "snapSelectionToGrid", "resetRotation", "alignSelection", "distributeSelection" }) do
 	local original = MS[name]

@@ -1,16 +1,10 @@
--- Mod Studio for Toribash
--- A friendlier, more powerful mod maker with a 3D move/rotate/scale gizmo,
--- triangles, parent/child hierarchy, undo/redo, multi-select, generators and project files.
---
--- Run it in game with:  /ls modstudio.lua    (close it with the X on the panel)
--- Files: data/script/modstudio.lua + data/script/modstudio/*.lua
+
 
 require("toriui.uielement")
 require("toriui.uielement3d")
 require("system.iofiles")
 require("system.menu_manager")
 
--- Already open: re-attach hooks (another script may have cleared them) and bring the UI back
 if (MS and MS.active and MS.addHooks) then
 	MS.addHooks()
 	if (not MS.testMode) then MS.hideGameHud() end
@@ -39,7 +33,6 @@ local function modMakerActive()
 	return ok and active
 end
 
----Closes the stock Mod Maker window if it's open so the two don't fight over input
 local function closeBuiltinModMaker()
 	if (ModMaker == nil) then return end
 	pcall(function()
@@ -55,7 +48,6 @@ end
 
 MS.closeBuiltinModMaker = closeBuiltinModMaker
 
----Hides the game's HUD while editing; remembers the player's setting so it can be put back
 function MS.hideGameHud()
 	if (MS.savedHud == nil) then
 		local ok, v = pcall(get_option, "hud")
@@ -64,12 +56,10 @@ function MS.hideGameHud()
 	pcall(set_option, "hud", 0)
 end
 
----Shows the game's HUD (used for test mode)
 function MS.showGameHud()
 	pcall(set_option, "hud", 1)
 end
 
----Puts the HUD back to whatever the player had before Mod Studio opened
 function MS.restoreGameHud()
 	if (MS.savedHud == nil) then return end
 	pcall(set_option, "hud", MS.savedHud)
@@ -89,7 +79,7 @@ function MS.tick()
 	MS.UI.tick()
 	local now = MS.clock()
 	MS.lastAutosave = MS.lastAutosave or now
-	-- Wait for a pause in editing so the save never lands mid-scrub
+
 	local idle = now - (MS.lastEditClock or 0) > 2
 	local every = 60 * math.max(1, tonumber(MS.settings.autosaveMinutes) or 5)
 	if (MS.settings.autosave and MS.changedSinceAutosave and now - MS.lastAutosave > every and idle and not MS.G.drag) then
@@ -104,7 +94,7 @@ function MS.addHooks()
 	add_hook("draw3d", H, function()
 		if (not MS.active) then return end
 		if (MS.testMode) then
-			-- Test mode: the game draws the world, Mod Studio only adds the 3D models on the live objects
+
 			if (MS.drawModels) then pcall(MS.drawModels, true) end
 			return
 		end
@@ -115,7 +105,7 @@ function MS.addHooks()
 		ok, err = pcall(MS.buildFrame)
 		if (not ok) then MS.reportError(err) end
 	end)
-	-- Floor lines are drawn here: draw_line_3d isn't batched and needs to run after everything else
+
 	add_hook("post_draw3d", H, function()
 		if (not MS.active or MS.testMode) then return end
 		local ok, err = pcall(MS.drawFloor3d)
@@ -143,7 +133,7 @@ function MS.addHooks()
 			MS.UI.open()
 		end
 	end)
-	-- The game fires "unload" for internal world reloads too, so never close here - just back up the work
+
 	add_hook("unload", H, function()
 		if (MS.active and MS.changedSinceAutosave and MS.settings.autosave) then
 			pcall(MS.saveProject, "_autosave", true)
@@ -151,7 +141,6 @@ function MS.addHooks()
 	end)
 end
 
----Prints an error once per message so a bug never spams chat every frame
 function MS.reportError(err)
 	MS.reported = MS.reported or {}
 	local s = tostring(err)
@@ -188,13 +177,12 @@ function MS.start()
 	MS.hideGameHud()
 	MS.UI.open()
 	if (MS.settings.firstRun) then
-		-- First time: a short guided tour (skippable; it can be replayed from Settings or H)
+
 		if (MS.UI.tourStart) then MS.UI.tourStart() else MS.UI.toggleHelp(true) end
 	end
 	MS.toast("Mod Studio " .. MS.VERSION .. " ready - press H any time for help")
 end
 
----Asks before closing if there's unsaved work
 function MS.close(force)
 	if (not force and MS.changed) then
 		MS.UI.confirm("Close Mod Studio?", "You have changes that aren't exported yet. Leaving the mod maker discards them (an autosave is kept).", {
@@ -210,9 +198,9 @@ function MS.close(force)
 end
 
 function MS.shutdown()
-	-- Release the 3D models loaded for the preview
+
 	if (MS.unloadModels) then pcall(MS.unloadModels) end
-	-- Editor-only hiding must not stay behind in the mod maker
+
 	if (MS.revealAllHidden) then pcall(MS.revealAllHidden) end
 	if (MS.changedSinceAutosave and MS.settings.autosave) then
 		pcall(MS.saveProject, "_autosave", true)

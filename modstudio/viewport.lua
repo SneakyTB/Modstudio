@@ -1,6 +1,4 @@
--- Mod Studio: 3D viewport
--- Move / rotate / scale gizmo, click + box selection, triangle corner handles,
--- overlays (grid, outlines, links, labels) and keyboard shortcuts.
+
 
 local MS = MS
 local V, M = MS.V, MS.M
@@ -20,7 +18,6 @@ local SELECT_COLOR = { 0.35, 0.9, 1 }
 local PRIMARY_COLOR = { 1, 0.85, 0.3 }
 local HOVER_OUTLINE = { 1, 1, 1 }
 
--- Colours you can pick for the selection / hover highlights (Settings > 3D view)
 MS.VIEW_COLORS = {
 	{ "cyan", "Cyan", { 0.35, 0.9, 1 } },
 	{ "yellow", "Yellow", { 1, 0.85, 0.2 } },
@@ -38,7 +35,6 @@ local function viewColor(name, fallback)
 	return fallback
 end
 
----Copies the chosen highlight colours into the tables the drawing code uses
 function MS.applyViewColors()
 	local st = MS.settings or {}
 	for _, pair in ipairs({
@@ -56,8 +52,6 @@ local function gizmoW() return MS.clamp(tonumber(MS.settings.gizmoWidth) or 1, 0
 local HIER_COLOR = { 0.80, 0.55, 1 }
 local AXIS_NAMES = { "X", "Y", "Z" }
 
--- The game's own scripts test these with "> 0": the value is a modifier state (may be a bit mask such as
--- 64 / 128 for left / right Ctrl), not strictly 1, so anything above zero means held.
 local function modDown(f)
 	local ok, v = pcall(f)
 	if (not ok) then return false end
@@ -69,16 +63,11 @@ local function shiftDown() return modDown(get_keyboard_shift) end
 local function altDown() return modDown(get_keyboard_alt) end
 MS.ctrlDown, MS.shiftDown, MS.altDown = ctrlDown, shiftDown, altDown
 
----Snapping is on when the setting is on, Ctrl held flips it for the current drag
 function MS.snapActive()
 	local s = MS.settings.snap
 	if (ctrlDown()) then s = not s end
 	return s
 end
-
----------------------------------------------------------------------------
--- Ray helpers (ray_world_point works from mouse callbacks)
----------------------------------------------------------------------------
 
 function MS.mouseRay(x, y)
 	local ok1, ax, ay, az = pcall(ray_world_point, x, y, 1)
@@ -100,7 +89,6 @@ local function rayPlane(ro, rd, p, n)
 	return V.add(ro, V.mul(rd, t))
 end
 
----Parameter t of the point on line (p0 + t*u) closest to the ray
 local function lineRayParam(p0, u, ro, rd)
 	local w0 = V.sub(p0, ro)
 	local b = V.dot(u, rd)
@@ -127,26 +115,15 @@ local function camVectors()
 end
 MS.camVectors = camVectors
 
----------------------------------------------------------------------------
--- What the gizmo operates on
----------------------------------------------------------------------------
-
 local function shapeMatrix(o)
 	return M.fromEuler(o.rot_x, o.rot_y, o.rot_z)
 end
-
----------------------------------------------------------------------------
--- Players as the game actually shows them. Mod coordinates (get_mod_body) can
--- differ from where the body is drawn (engage distance / height / rotation),
--- so picking, outlines and the gizmo use the live world data instead.
----------------------------------------------------------------------------
 
 local function tabOpen(id)
 	return MS.UI and MS.UI.isTabOpen and MS.UI.isTabOpen(id)
 end
 MS.tabOpen = tabOpen
 
----Bodies tab is open on its Place sub-tab (whole-player gizmo + dojo handle)
 local function placingPlayers()
 	return tabOpen("players") and MS.UI.sub ~= nil and MS.UI.sub.players == "place"
 end
@@ -158,7 +135,6 @@ local function rotFromTB(r)
 	return { { g(0), g(1), g(2) }, { g(4), g(5), g(6) }, { g(8), g(9), g(10) } }
 end
 
----World pos / rotation / sides / shape of a body part, or nil
 function MS.bodyWorld(p, b)
 	local ok, info = pcall(get_body_info, p, b)
 	if (not ok or type(info) ~= "table" or not info.pos or not info.sides) then return nil end
@@ -170,7 +146,6 @@ function MS.bodyWorld(p, b)
 	}
 end
 
----World pos + radius of a joint, or nil
 function MS.jointWorld(p, j)
 	local pos
 	local ok, v = pcall(get_joint_pos2, p, j)
@@ -186,8 +161,6 @@ function MS.jointWorld(p, j)
 	return { pos = pos, radius = (okr and type(r) == "number") and r or (cached and cached.radius) or 0.1 }
 end
 
----Rotation that turns a player's mod coordinates into world coordinates
----(players can be turned around by engage rotation). Measured from the pecs.
 function MS.playerFrame(p)
 	local bm = MS.bodies[p]
 	local wr, wl = MS.bodyWorld(p, 5), MS.bodyWorld(p, 8)
@@ -200,8 +173,6 @@ function MS.playerFrame(p)
 	if (abs(yaw) < 0.05) then return M.identity() end
 	return M.axisAngle({ 0, 0, 1 }, yaw)
 end
-
--- Ray intersections. Return the distance along the ray or nil.
 
 local function rayOBB(ro, rd, pos, R, half)
 	local Rt = M.transpose(R)
@@ -236,11 +207,10 @@ local function raySphere(ro, rd, c, r)
 	return t
 end
 
----Capsule along local Z: `len` between the end-cap centers
 local function rayCapsule(ro, rd, pos, R, r, len)
 	local a = M.col(R, 3)
 	local p0 = V.sub(pos, V.mul(a, len / 2))
-	-- Closest approach between the ray and the capsule's core segment
+
 	local w0 = V.sub(ro, p0)
 	local b = V.dot(rd, a)
 	local d, e = V.dot(rd, w0), V.dot(a, w0)
@@ -262,7 +232,6 @@ local function rayCapsule(ro, rd, pos, R, r, len)
 	return nil
 end
 
----Distance along the ray to a body part, or nil
 local function rayBody(ro, rd, w)
 	local s = w.sides
 	if (w.shape == 0) then
@@ -273,7 +242,6 @@ local function rayBody(ro, rd, w)
 	return rayOBB(ro, rd, w.pos, w.R, { s[1] / 2, s[2] / 2, s[3] / 2 })
 end
 
----Nearest body part under the cursor: player, body, distance
 function MS.pickBody(x, y)
 	local ro, rd = MS.mouseRay(x, y)
 	if (not ro) then return nil end
@@ -289,7 +257,6 @@ function MS.pickBody(x, y)
 	return bp, bb, best
 end
 
----Nearest joint under the cursor (slightly generous radius): player, joint, distance
 function MS.pickJoint(x, y)
 	local ro, rd = MS.mouseRay(x, y)
 	if (not ro) then return nil end
@@ -305,11 +272,10 @@ function MS.pickJoint(x, y)
 	return bp, bj, best
 end
 
----Returns the current gizmo context or nil
 function MS.gizmoContext()
 	local localSpace = MS.settings.space == "local"
 	if (placingPlayers() and MS.bodySel and MS.bodies[MS.bodySel.p]) then
-		-- Whole player: move / turn where they stand
+
 		local p = MS.bodySel.p
 		local c = MS.playerWorldCenter(p)
 		if (c) then
@@ -362,7 +328,6 @@ function MS.gizmoContext()
 	return { kind = "env", pivot = center, A = A, rot = true, scale = true }
 end
 
----Snapshot of the things a drag will change
 local function captureItems(ctx)
 	local items = {}
 	if (ctx.kind == "player") then
@@ -376,7 +341,7 @@ local function captureItems(ctx)
 			local o = MS.joints[p] and MS.joints[p][j]
 			if (o) then it.joints[j] = { pos = { o.pos_x, o.pos_y, o.pos_z }, axis = { o.axis_x or 0, o.axis_y or 0, o.axis_z or 0 } } end
 		end
-		-- Where the game draws each part now: lets a move show up instantly (set_body_pos)
+
 		it.world, it.jworld = {}, {}
 		for b = 0, MS.numBodies(p) - 1 do
 			local w = MS.bodyWorld(p, b)
@@ -400,7 +365,7 @@ local function captureItems(ctx)
 	elseif (ctx.kind == "vertex") then
 		items.vertex = { tri = ctx.tri, key = ctx.key, pos = V.copy(MS.tris[ctx.tri][ctx.key]) }
 	else
-		-- Children ride along with their parents
+
 		local tris, plain = MS.selSplitFamily()
 		items.objs = {}
 		for _, idx in ipairs(plain) do
@@ -417,7 +382,6 @@ local function captureItems(ctx)
 	return items
 end
 
----Scales full box dims by local factors. Spheres keep one radius, cylinders radius+length.
 local function scaleDims(shape, dims, fl, snap)
 	local d
 	if (shape == 0) then
@@ -439,7 +403,6 @@ local function scaleDims(shape, dims, fl, snap)
 	return d
 end
 
----Maps a world-space axis scale to the object's local axes
 local function localFactors(R, axisWorld, f)
 	if (not axisWorld) then return { f, f, f } end
 	local best, bestDot = 1, -1
@@ -452,8 +415,6 @@ local function localFactors(R, axisWorld, f)
 	return fl
 end
 
----Applies a transform relative to the drag start state.
----op = { move = vec } | { rot = matrix } | { scaleAxis = vec|nil, scale = f }
 local function applyOp(drag, op)
 	local items, pivot = drag.items, drag.pivot0
 	local snap = drag.snap
@@ -469,7 +430,6 @@ local function applyOp(drag, op)
 		return V.add(pivot, d)
 	end
 
-	-- Body/joint gizmos work in world space; convert into the player's mod coordinates
 	local W = drag.ctx and drag.ctx.W
 	local worldMove, worldRot = op.move, op.rot
 	if ((items.body or items.joint) and W) then
@@ -483,9 +443,7 @@ local function applyOp(drag, op)
 	end
 
 	if (items.player) then
-		-- Whole player: only a live preview here (the drawn parts are shifted with
-		-- set_body_pos / set_joint_pos). Nothing is written to the mod data - on release
-		-- MS.movePlayerBy() changes this player's engageplayerpos entry instead.
+
 		local it = items.player
 		local p = it.p
 		if (not worldMove) then return end
@@ -500,8 +458,7 @@ local function applyOp(drag, op)
 		end
 		return
 	end
-	-- Body part / joint: only an outline follows the drag (drag.preview); the game's fighter is
-	-- rebuilt once on release. Moving the real part mid-drag let its joints yank the others about.
+
 	drag.livePreview = ((items.body and items.body.world) or (items.joint and items.joint.world)) and true or false
 	if (items.body and items.body.world) then
 		local it = items.body
@@ -512,15 +469,11 @@ local function applyOp(drag, op)
 		drag.preview = { kind = "joint", p = items.joint.p, j = items.joint.j,
 			pos = worldMove and V.add(items.joint.world, worldMove) or items.joint.world }
 	end
-	-- Body parts / joints: nothing goes to the game until the drag ends (MS.endDrag writes
-	-- drag.pending). The game moves a live part as soon as its mod value changes, and its joints
-	-- then pulled the rest of the fighter around while the drag went on.
+
 	if (items.body) then
 		local it = items.body
 		local np = op.move and V.add(it.pos, op.move) or it.pos
-		-- The game turns a fighter (Uke by 180) around its head, so the head itself isn't turned:
-		-- a world move of the head is the same move in the mod. The rest of the fighter swings
-		-- round the new head, so on release it gets the opposite shift (pending.comp).
+
 		local comp
 		if (it.b == 0 and worldMove and W) then
 			np = V.add(it.pos, worldMove)
@@ -535,7 +488,7 @@ local function applyOp(drag, op)
 		if (op.scale) then d = scaleDims(it.type, it.dims, localFactors(it.R, op.scaleAxis, op.scale), snap) end
 		if (drag.preview and drag.preview.kind == "body" and op.scale) then drag.preview.sides = d end
 		local fields = { pos_x = np[1], pos_y = np[2], pos_z = np[3], sides_x = d[1], sides_y = d[2], sides_z = d[3] }
-		-- Only a real turn rewrites the angles (a move keeps them exactly as they were)
+
 		if (op.rot) then fields.rot_x, fields.rot_y, fields.rot_z = x, y, z end
 		drag.pending = { kind = "body", p = it.p, i = it.b, fields = fields, comp = comp }
 		return
@@ -561,7 +514,7 @@ local function applyOp(drag, op)
 			if (op.rot) then
 				MS.setObjRot(it.idx, M.mul(op.rot, it.R))
 			elseif (op.move) then
-				-- nothing else changes
+
 			else
 				MS.setObjRot(it.idx, it.R)
 				local d = it.dims
@@ -584,16 +537,12 @@ local function applyOp(drag, op)
 	end
 end
 
----------------------------------------------------------------------------
--- Dragging
----------------------------------------------------------------------------
-
 local function snapMoveDelta(drag, d, axes)
 	if (not drag.snap or MS.settings.gridStep <= 0) then return d end
 	local step = MS.settings.gridStep
 	local worldFrame = drag.worldFrame
 	if (worldFrame) then
-		-- Absolute snapping: the pivot lands on grid lines
+
 		local target = V.add(drag.pivot0, d)
 		for k = 1, 3 do
 			if (axes[k]) then target[k] = MS.round(target[k], step) end
@@ -612,23 +561,12 @@ local function isIdentity(A)
 	return abs(A[1][1] - 1) < 1e-6 and abs(A[2][2] - 1) < 1e-6 and abs(A[3][3] - 1) < 1e-6
 end
 
----------------------------------------------------------------------------
--- Held objects: a direct drag of an object keeps it under the cursor at a fixed
--- distance from the camera (only the wheel changes that distance). The cursor
--- direction is stored in camera-local terms, so it can be rebuilt every frame
--- with the CURRENT camera - ray_world_point can lag a frame behind the camera.
----------------------------------------------------------------------------
-
----Fresh screen Jacobian of the current camera (built every frame in draw3d by MS.updateProj)
 local function freshProj()
 	local pr = MS.proj
 	if (pr and MS.clock() - pr.t < 0.5) then return pr end
 	return nil
 end
 
----Analytic cursor ray as { right, up, forward } components, built from the camera
----that MS.proj was projected with. Solves (x - cx, y - cy) = a*R' + b*U' for the
----offsets (a, b) across the plane 10 units in front of the camera.
 local function analyticLocalRay(x, y)
 	local pr = freshProj()
 	if (not pr or not x or not y) then return nil end
@@ -639,7 +577,6 @@ local function analyticLocalRay(x, y)
 	return { a / n, b / n, pr.depth / n }
 end
 
----Old fallback (no projection yet): direction through screen point (x, y) from ray_world_point
 local function legacyLocalRay(x, y)
 	local ro, rd = MS.mouseRay(x, y)
 	if (not ro) then return nil end
@@ -665,8 +602,6 @@ local function heldLocalRay(x, y)
 	return analyticLocalRay(x, y) or legacyLocalRay(x, y)
 end
 
----World ray for a camera-local direction. Uses the camera the projection was built
----from (same frame), so the ray always matches what is on screen.
 local function heldWorldRay(lr)
 	local pr = freshProj()
 	local pos, f, r, u
@@ -680,8 +615,6 @@ local function heldWorldRay(lr)
 	return pos, rd, f, r, u
 end
 
----Grabs the selection where it is right now: remembers its depth along the cursor
----ray and its offset from that ray (camera-local), so nothing jumps
 local function initHeld(drag, x, y)
 	local lr = heldLocalRay(x, y)
 	if (not lr) then
@@ -695,9 +628,6 @@ local function initHeld(drag, x, y)
 	drag.heldD = nil
 end
 
----Puts a held selection under the cursor at its stored distance. The ray comes from
----the latest projection and the latest cursor position every call (each frame, mouse
----move and wheel), never from ray_world_point, so camera motion can't skew it.
 function MS.tickHeld(drag, mx, my)
 	local hd = drag and drag.held
 	if (not hd or not drag.started) then return end
@@ -714,11 +644,10 @@ function MS.tickHeld(drag, mx, my)
 	applyOp(drag, { move = d })
 end
 
----Starts a drag. handle = { type = axis|plane|free|ring|saxis|suni|direct, k = axis }
 function MS.beginDrag(handle, x, y, ctx)
 	ctx = ctx or MS.gizmoContext()
 	if (not ctx) then return false end
-	-- Alt + gizmo handle: drag out a copy and leave the original where it was
+
 	local dup = false
 	if (ctx.kind == "env" and handle.type ~= "direct" and altDown() and MS.settings.altDuplicate ~= false) then
 		local clip = MS.copySelection()
@@ -740,7 +669,7 @@ function MS.beginDrag(handle, x, y, ctx)
 		pivot0 = V.copy(ctx.pivot), A = ctx.A, worldFrame = isIdentity(ctx.A),
 		items = captureItems(ctx), started = handle.type ~= "direct", angle = 0
 	}
-	-- Kept for cancelling: rebaseDrag() replaces items/pivot0 when the camera moves
+
 	drag.origItems, drag.origPivot = drag.items, drag.pivot0
 	local A = ctx.A
 	local _, _, fwd = camVectors()
@@ -748,7 +677,7 @@ function MS.beginDrag(handle, x, y, ctx)
 		drag.axis = M.col(A, handle.k)
 		drag.t0 = ro and lineRayParam(drag.pivot0, drag.axis, ro, rd)
 		if (handle.type == "axis" and handle.fake) then
-			-- Axis pointing along the view: move by mouse distance along the stand-in arrow
+
 			local g = MS.frame and MS.frame.giz
 			drag.fake = handle.fake
 			drag.ppu = (g and g.L and g.L > 0) and (MS.settings.gizmoSize / g.L) or 100
@@ -800,11 +729,11 @@ function MS.updateDrag(x, y)
 		if (abs(x - drag.x0) + abs(y - drag.y0) < 5) then return end
 		drag.started = true
 		if (drag.ctx.kind ~= "player") then drag.undoPushed = true; MS.pushUndo("Move") end
-		-- The camera may have moved since the click: grab again from here so nothing jumps
+
 		if (drag.held) then initHeld(drag, x, y) end
 	end
 	if (drag.held) then
-		-- No ray_world_point here: tickHeld rebuilds the ray from the current projection
+
 		if (not freshProj()) then
 			local lr = legacyLocalRay(x, y)
 			if (lr) then drag.held.lray = lr end
@@ -814,8 +743,7 @@ function MS.updateDrag(x, y)
 		return
 	end
 	if (drag.needRebase) then
-		-- Camera moved since the last mouse update: anchor at the previous cursor
-		-- position with today's camera, then apply only the real mouse movement
+
 		MS.rebaseAt(drag, G.prevMouseX or x, G.prevMouseY or y)
 	end
 	drag.snap = MS.snapActive()
@@ -837,7 +765,7 @@ function MS.updateDrag(x, y)
 			readout = AXIS_NAMES[h.k] .. " " .. (V.dot(d, drag.axis) >= 0 and "+" or "") .. MS.fmt(V.dot(d, drag.axis))
 		end
 	elseif (h.type == "plane" or h.type == "free" or h.type == "direct") then
-		-- Rays that only skim the plane hit it miles away - ignore them instead of flinging the object
+
 		local grazing = abs(V.dot(rd, drag.normal)) < 0.06
 		local hit = (not grazing) and drag.hit0 and rayPlane(ro, rd, drag.pivot0, drag.normal)
 		if (hit and V.dist(hit, ro) > 250) then hit = nil end
@@ -910,11 +838,11 @@ function MS.endDrag()
 	if (drag.started) then
 		local pd = drag.pending
 		if (pd) then
-			-- Write the body part / joint once, now that it's let go, then rebuild the fighter
+
 			local set = pd.kind == "body" and MS.bodySet or MS.jointSet
 			for f, v in pairs(pd.fields) do set(pd.p, pd.i, f, v) end
 			if (pd.comp) then
-				-- Moved a turned fighter's head: shift everything else so it stays where it was
+
 				local c = pd.comp
 				for b, o in pairs(MS.bodies[pd.p] or {}) do
 					if (b ~= 0 and o.pos_x) then
@@ -937,14 +865,13 @@ function MS.endDrag()
 			MS.flush(true)
 		end
 		if (drag.ctx and drag.ctx.kind == "player" and drag.pTotal and V.len(drag.pTotal) > 1e-4) then
-			-- Whole player: the preview becomes this player's engageplayerpos entry
+
 			MS.movePlayerBy(drag.ctx.p, drag.pTotal, { label = "Move player", previewed = true })
 		end
 		MS.UI.requestRefresh()
 	end
 end
 
----Ends a drag without touching anything (used by undo/restore)
 function MS.endDragSilently()
 	if (G.drag) then
 		G.drag = nil
@@ -957,7 +884,7 @@ function MS.cancelDrag()
 	local drag = G.drag
 	if (not drag) then return end
 	if (drag.dup) then
-		-- Throw the copies away again
+
 		MS.endDragSilently()
 		local e = table.remove(MS.undoStack)
 		if (e) then MS.restore(e.snap) end
@@ -971,7 +898,7 @@ function MS.cancelDrag()
 		if (drag.handle.type ~= "axis" and drag.handle.type ~= "plane" and drag.handle.type ~= "free" and drag.handle.type ~= "direct") then
 			applyOp(drag, { scale = 1 })
 		end
-		-- The undo entry pushed at drag start is now a no-op; drop it
+
 		if (drag.undoPushed) then table.remove(MS.undoStack) end
 	end
 	MS.endDragSilently()
@@ -979,19 +906,11 @@ function MS.cancelDrag()
 	MS.UI.requestRefresh()
 end
 
----------------------------------------------------------------------------
--- Per-frame projection cache (get_screen_pos only works in draw3d)
----------------------------------------------------------------------------
-
 local function P(v)
 	local x, y, z = get_screen_pos(v[1], v[2], v[3])
 	return { x, y, ok = (z == 0) }
 end
 
----Screen Jacobian of the current camera, rebuilt every frame in draw3d (the only place
----get_screen_pos works). Three points 10 units ahead give where the camera's right and
----up axes land on screen, which is all that's needed to turn a cursor position into a
----world ray without ray_world_point (that lags a frame behind the camera).
 local PROJ_DEPTH, PROJ_SPAN = 10, 4
 function MS.updateProj()
 	local pos, _, fwd, right, up = camVectors()
@@ -1000,7 +919,7 @@ function MS.updateProj()
 	local pr = P(V.add(C, V.mul(right, PROJ_SPAN)))
 	local pu = P(V.add(C, V.mul(up, PROJ_SPAN)))
 	if (not (pc.ok and pr.ok and pu.ok)) then return end
-	-- Screen pixels per unit of right / up at that depth
+
 	local rx, ry = (pr[1] - pc[1]) / PROJ_SPAN, (pr[2] - pc[2]) / PROJ_SPAN
 	local ux, uy = (pu[1] - pc[1]) / PROJ_SPAN, (pu[2] - pc[2]) / PROJ_SPAN
 	local det = rx * uy - ry * ux
@@ -1022,7 +941,6 @@ local function boxCorners(pos, R, e)
 end
 local BOX_EDGES = { { 1, 2 }, { 3, 4 }, { 5, 6 }, { 7, 8 }, { 1, 3 }, { 2, 4 }, { 5, 7 }, { 6, 8 }, { 1, 5 }, { 2, 6 }, { 3, 7 }, { 4, 8 } }
 
----Builds a 2D outline (list of segments, or a circle) for a shape
 local function outline(shape, pos, R, dims, right)
 	if (shape == 0) then
 		local c = P(pos)
@@ -1054,13 +972,11 @@ function MS.buildFrame()
 	local _, _, fwd, right = camVectors()
 	F.right, F.fwd = right, fwd
 
-	-- Object centers (box select + labels)
 	for idx in pairs(MS.objs) do
 		local c = P(MS.objPos(idx))
 		if (c.ok) then F.centers[idx] = c end
 	end
 
-	-- Outlines for the selection (triangles get their real edges instead of slices)
 	local tris, plain = MS.selSplit()
 	local count = 0
 	for _, idx in ipairs(plain) do
@@ -1093,8 +1009,6 @@ function MS.buildFrame()
 		end
 	end
 
-	-- Body / joint selection on the player tabs
-	-- Uses where the game actually draws the player, not the raw mod values
 	local function bodyOutline(p, b, color, alpha)
 		local w = MS.bodyWorld(p, b)
 		local pv = G.drag and G.drag.preview
@@ -1135,7 +1049,6 @@ function MS.buildFrame()
 		end
 	end
 
-	-- Links between objects
 	if (MS.settings.showLinks or tabOpen("links")) then
 		for j, ej in pairs(MS.ejs) do
 			local o1, o2 = MS.objs[ej.obj1], MS.objs[ej.obj2]
@@ -1147,8 +1060,6 @@ function MS.buildFrame()
 		end
 	end
 
-	-- Hierarchy: lines from the selection to its parent and down through its
-	-- children, plus a faint outline on children that will move along with it
 	if (MS.settings.showHierarchy ~= false or (MS.UI and MS.UI.parentPick)) then
 		local set = MS.selKeys()
 		local H = (next(set) ~= nil or MS.settings.showAllHierarchy) and MS.hier() or nil
@@ -1196,13 +1107,11 @@ function MS.buildFrame()
 		end
 	end
 
-	-- Measuring
 	local m = MS.measure
 	if (m and m.a) then
 		F.measure = { a = P(m.a), b = m.b and P(m.b) or nil, pa = m.a, pb = m.b }
 	end
 
-	-- Dojo resize handle while placing players
 	if (placingPlayers()) then
 		local r = MS.dojoShape()
 		if (r) then
@@ -1211,7 +1120,6 @@ function MS.buildFrame()
 		end
 	end
 
-	-- Labels
 	if (MS.settings.showLabels) then
 		local n = 0
 		for idx, c in pairs(F.centers) do
@@ -1224,7 +1132,6 @@ function MS.buildFrame()
 		end
 	end
 
-	-- Gizmo
 	local ctx = (MS.settings.tool ~= "select") and MS.gizmoContext() or nil
 	if (G.drag and G.drag.started) then ctx = MS.gizmoContext() end
 	if (ctx and (MS.settings.tool == "move" or (MS.settings.tool == "rotate" and ctx.rot) or (MS.settings.tool == "scale" and ctx.scale) or ctx.kind == "vertex" or ctx.kind == "joint")) then
@@ -1237,8 +1144,7 @@ function MS.buildFrame()
 			local ppu = sqrt((r[1] - c[1]) ^ 2 + (r[2] - c[2]) ^ 2)
 			if (ppu > 0.01) then
 				local L = MS.settings.gizmoSize / ppu
-				-- By default the gizmo only slides along its arrows. The centre dot (free move /
-				-- even resize) and the plane squares are options (Settings > Gizmo).
+
 				local noCenter = not MS.settings.gizmoCenter
 				local g = { tool = tool, center = c, L = L, axes = {}, planes = {}, rings = {}, noCenter = noCenter }
 				for k = 1, 3 do
@@ -1247,9 +1153,7 @@ function MS.buildFrame()
 					local base = P(V.add(pivot, V.mul(dir, L * 0.18)))
 					g.axes[k] = { tip = tip, base = base, ok = tip.ok and base.ok and ((tip[1] - c[1]) ^ 2 + (tip[2] - c[2]) ^ 2) > 196 }
 					if (tool == "move" and not g.axes[k].ok) then
-						-- Axis points (almost) along the view direction (e.g. Y from the default
-						-- camera): its arrow collapses to a dot. Show a stand-in arrow instead;
-						-- dragging it moves along the axis by mouse distance.
+
 						local away = V.dot(dir, fwd) > 0
 						local fd = away and { 0.7071, -0.7071 } or { -0.7071, 0.7071 }
 						g.axes[k] = { tip = { c[1] + fd[1] * 52, c[2] + fd[2] * 52, ok = true },
@@ -1285,10 +1189,6 @@ function MS.buildFrame()
 	end
 	MS.frame = F
 end
-
----------------------------------------------------------------------------
--- Hit testing (screen space, uses the last frame's projections)
----------------------------------------------------------------------------
 
 local function distSeg(px, py, ax, ay, bx, by)
 	local dx, dy = bx - ax, by - ay
@@ -1354,7 +1254,6 @@ function MS.gizmoHit(x, y)
 	return best
 end
 
----Triangle corner handle under the cursor
 local function vertexHit(x, y)
 	local F = MS.frame
 	if (not F) then return nil end
@@ -1381,13 +1280,6 @@ local function pickObj(x, y)
 	return nil
 end
 
----------------------------------------------------------------------------
--- Drawing
----------------------------------------------------------------------------
-
----Floor grid, dojo outline and measuring line. Runs from the post_draw3d hook: draw_line_3d
----isn't batched, so it only draws reliably after everything else (and the lines are
----lifted off the floor by their distance from the camera so they don't z-fight away).
 function MS.drawFloor3d()
 	if (not draw_line_3d) then return end
 	local camPos = camVectors()
@@ -1395,17 +1287,17 @@ function MS.drawFloor3d()
 		local dx, dy, dz = x - camPos[1], y - camPos[2], base - camPos[3]
 		return base + 0.002 * sqrt(dx * dx + dy * dy + dz * dz)
 	end
-	-- Ground grid. draw_line is 2D only (x1, y1, x2, y2, width); floor lines need draw_line_3d.
+
 	if (MS.settings.showGrid) then
 		local step = tonumber(MS.settings.gridStep) or 0.25
 		if (step <= 0.001) then step = 0.25 end
 		local ext = math.max(1, tonumber(MS.settings.gridExtent) or 50)
-		-- Too many lines (tiny step / huge extent): draw only the whole-unit lines
+
 		if (2 * ext / step > 400) then step = 1 end
 		while (2 * ext / step > 400) do step = step * 2 end
 		local n = floor(ext / step)
 		local reach = n * step
-		-- Long lines are cut into pieces so each piece can be lifted by its own distance
+
 		local segLen = 5
 		local nLines = 2 * (2 * n + 1)
 		while (nLines * math.ceil(2 * reach / segLen) > 3000) do segLen = segLen * 1.5 end
@@ -1433,7 +1325,7 @@ function MS.drawFloor3d()
 			end
 		end
 	end
-	-- Dojo outline on the floor (square: half-width r, round: radius r)
+
 	local placing = placingPlayers()
 	if (MS.settings.showDojo or placing) then
 		local r, kind = MS.dojoShape()
@@ -1441,7 +1333,7 @@ function MS.drawFloor3d()
 			local c = MS.dojoCenter()
 			local z = lift(0.03, c[1], c[2])
 			local w = placing and 4 or 3
-			-- Dark underlay then bright line, so it reads on any floor colour
+
 			for pass = 1, 2 do
 				if (pass == 1) then set_color(0, 0, 0, 0.5) else set_color(1, 0.85, 0.2, placing and 1 or 0.9) end
 				local zz = pass == 1 and z - 0.006 or z
@@ -1459,7 +1351,7 @@ function MS.drawFloor3d()
 					end
 				end
 			end
-			-- Short posts so the edge is visible from a low camera
+
 			set_color(1, 0.85, 0.2, 0.8)
 			local posts = {}
 			if (kind == 0) then
@@ -1470,7 +1362,7 @@ function MS.drawFloor3d()
 			for _, q in ipairs(posts) do pcall(draw_line_3d, q[1], q[2], 0.02, q[1], q[2], 0.35, w) end
 		end
 	end
-	-- Measuring line (depth tested so it sits in the world)
+
 	local m = MS.measure
 	if (m and m.a and m.b) then
 		set_color(0.35, 0.9, 1, 0.9)
@@ -1480,9 +1372,9 @@ end
 
 function MS.draw3d()
 	pcall(MS.updateProj)
-	-- Per-object 3D models (preview of use_model / model_name)
+
 	if (MS.drawModels) then pcall(MS.drawModels) end
-	-- Translucent fill for selected / hovered triangles, both windings
+
 	local tris = MS.selSplit()
 	local function fill(t, a)
 		set_color(SELECT_COLOR[1], SELECT_COLOR[2], SELECT_COLOR[3], a)
@@ -1492,14 +1384,8 @@ function MS.draw3d()
 	for id in pairs(tris) do fill(MS.tris[id], 0.22) end
 end
 
----------------------------------------------------------------------------
--- Clipping: everything drawn over the 3D view stays inside the free viewport, i.e. the screen minus the
--- toolbar, status bar and docked panels (our 2D hook would otherwise draw above the panels).
----------------------------------------------------------------------------
+local CLIP
 
-local CLIP -- { x0, y0, x1, y1 } or nil (no clipping)
-
----Free viewport rectangle from the UI's top-level pieces
 function MS.viewportRect()
 	local UI = MS.UI
 	local W, H = WIN_W or 0, WIN_H or 0
@@ -1511,7 +1397,7 @@ function MS.viewportRect()
 			local x, y, w, h = el.pos.x, el.pos.y, el.size.w, el.size.h
 			local tol = 3
 			if (w > 0 and h > 0 and not (w >= W - tol and h >= H - tol)) then
-				-- Cut away from the screen edge the panel is attached to (shallowest cut when several)
+
 				local best, depth
 				local function try(edge, d)
 					if (not depth or d < depth) then best, depth = edge, d end
@@ -1521,7 +1407,7 @@ function MS.viewportRect()
 				if (y <= tol) then try("t", h) end
 				if (y + h >= H - tol) then try("b", h) end
 				if (not best) then
-					-- Floating panel: cut from the nearest side along its longer direction
+
 					if (w >= h) then best = (y + h / 2 < H / 2) and "t" or "b"
 					else best = (x + w / 2 < W / 2) and "l" or "r" end
 				end
@@ -1541,7 +1427,6 @@ local function inClip(x, y, m)
 	return x >= CLIP[1] + m and x <= CLIP[3] - m and y >= CLIP[2] + m and y <= CLIP[4] - m
 end
 
----Liang-Barsky: the part of the segment inside the clip rectangle, or nil
 local function clipSeg(x1, y1, x2, y2, pad)
 	if (not CLIP) then return x1, y1, x2, y2 end
 	pad = pad or 0
@@ -1573,7 +1458,6 @@ local function cline(x1, y1, x2, y2, w)
 	if (a) then pcall(draw_line, a, b, c, d, w) end
 end
 
----Filled rectangle, cut to the clip area
 local function cquad(x, y, w, h)
 	if (CLIP) then
 		local ax, ay = math.max(x, CLIP[1]), math.max(y, CLIP[2])
@@ -1627,15 +1511,13 @@ function MS.draw2d()
 	local F = MS.frame
 	if (not F) then return end
 	MS.applyViewColors()
-	-- Help window / dialogs sit above the 3D view: this hook runs before toriui draws them, so anything drawn
-	-- here would show through (outlines, gizmo and labels over the white help panel). Draw no overlays then.
+
 	local UIm = MS.UI
 	if (UIm and (UIm.modalOpen or (UIm.help and not UIm.help.destroyed) or (UIm.dialog and not UIm.dialog.destroyed))) then return end
 	local ow, gw = outlineW(), gizmoW()
 	local cx0, cy0, cx1, cy1 = MS.viewportRect()
 	CLIP = { cx0, cy0, cx1, cy1 }
 
-	-- Outlines
 	for _, ol in ipairs(F.outlines) do
 		local c = ol.color
 		set_color(c[1], c[2], c[3], ol.alpha or 0.95)
@@ -1657,7 +1539,7 @@ function MS.draw2d()
 			if (a.ok and b.ok) then line2d(a, b, ow + 0.5) end
 		end
 	end
-	-- Triangle corner handles
+
 	for id, vs in pairs(F.verts) do
 		for _, key in ipairs({ "a", "b", "c" }) do
 			local p = vs[key]
@@ -1675,7 +1557,6 @@ function MS.draw2d()
 		end
 	end
 
-	-- Parent lines (child end small dot, parent end big dot)
 	for _, l in ipairs(F.hier or {}) do
 		if (l.a.ok and l.b.ok) then
 			set_color(HIER_COLOR[1], HIER_COLOR[2], HIER_COLOR[3], l.strong and 0.9 or 0.4)
@@ -1688,7 +1569,6 @@ function MS.draw2d()
 		end
 	end
 
-	-- Links
 	for _, l in ipairs(F.links) do
 		if (l.a.ok and l.b.ok) then
 			if (l.selected) then set_color(1, 0.85, 0.2, 0.95) else set_color(1, 0.6, 0.2, 0.6) end
@@ -1702,14 +1582,12 @@ function MS.draw2d()
 		end
 	end
 
-	-- Labels
 	for _, lb in ipairs(F.labels) do
 		local ok, w = pcall(get_string_length, lb[3], 1)
 		w = ok and w or 40
 		text(lb[3], lb[1] - w / 2, lb[2] - 20, 1, 1, 1, 0.85)
 	end
 
-	-- Gizmo
 	local g = F.giz
 	if (g) then
 		local hov = G.drag and G.drag.handle or G.hover
@@ -1754,7 +1632,7 @@ function MS.draw2d()
 				end
 			end
 			if (g.noCenter) then
-				-- Just a small marker: there's no centre handle to grab
+
 				set_color(1, 1, 1, 0.9)
 				disk(c[1], c[2], 3)
 			else
@@ -1782,7 +1660,6 @@ function MS.draw2d()
 		end
 	end
 
-	-- Measuring points + distance label
 	local ms = F.measure
 	if (ms) then
 		for _, p in ipairs({ ms.a, ms.b }) do
@@ -1805,7 +1682,6 @@ function MS.draw2d()
 		end
 	end
 
-	-- Dojo resize handle
 	local dh = F.dojoHandle
 	if (dh and dh.ok) then
 		set_color(0, 0, 0, 0.7)
@@ -1815,7 +1691,6 @@ function MS.draw2d()
 		text(G.dojoReadout or "Drag to resize the dojo", dh[1] + 12, dh[2] - 9, 1, 0.9, 0.5)
 	end
 
-	-- Box selection rectangle
 	local mq = G.marquee
 	if (mq and mq.active) then
 		local x1, y1 = math.min(mq.x0, mq.x1), math.min(mq.y0, mq.y1)
@@ -1829,7 +1704,6 @@ function MS.draw2d()
 		cline(x1 + w, y1, x1 + w, y1 + h, 1)
 	end
 
-	-- Drag readout next to the cursor
 	local drag = G.drag
 	if (drag and drag.started and drag.readout and drag.mx) then
 		local s = drag.readout .. (drag.snap and "  [snap]" or "")
@@ -1841,13 +1715,6 @@ function MS.draw2d()
 	end
 end
 
----------------------------------------------------------------------------
--- Camera helpers
----------------------------------------------------------------------------
-
----Smoothly moves the camera to look at `target` from `dir` (unit vector) at `dist`.
----`stay` (focus / view buttons) leaves the camera in free mode afterwards so the
----game's normal camera doesn't pull it straight back.
 function MS.cameraTo(target, dir, dist, dur, stay)
 	local camPos, look = camVectors()
 	if (not dir) then
@@ -1860,19 +1727,18 @@ function MS.cameraTo(target, dir, dist, dur, stay)
 		t0 = clock(), dur = dur or 0.35, stay = stay
 	}
 	if (stay and not G.drag) then
-		-- The mouse camera overwrites script moves every frame while it's on
+
 		pcall(disable_mouse_camera_movement)
 		MS.camAnim.reenable = true
 	end
 end
 
----Zooms toward the look-at point. Several quick notches add up instead of restarting.
 function MS.zoomCamera(factor)
 	local camPos, look = camVectors()
 	local a = MS.camAnim
 	local fromPos, target = camPos, look
 	if (a) then
-		-- Continue from where the running zoom/focus is heading
+
 		fromPos, target = a.toPos, a.toLook
 	end
 	local off = V.sub(fromPos, target)
@@ -1880,9 +1746,6 @@ function MS.zoomCamera(factor)
 	MS.cameraTo(target, V.norm(off), d, 0.15)
 end
 
----The game resets the camera every frame unless it's moved from inside the
----"camera" hook in FREE mode (same trick the game's own tutorial uses).
----Movement is queued here and applied by MS.onCamera().
 function MS.tickCamera()
 	local a = MS.camAnim
 	if (not a) then return end
@@ -1892,7 +1755,7 @@ function MS.tickCamera()
 	if (t >= 1) then
 		MS.camAnim = nil
 		if (a.reenable) then
-			-- Turn the mouse camera back on once the last frame has been placed
+
 			MS.camReenableAfter = 2
 		end
 	end
@@ -1904,7 +1767,7 @@ local function placeCamera(pos, look, stay)
 	local okm, mode = pcall(get_camera_mode)
 	mode = (okm and type(mode) == "number") and mode or 0
 	if (stay and mode ~= 3 and MS.prevCamMode == nil) then
-		-- Remember the player's camera mode so closing Mod Studio can put it back
+
 		MS.prevCamMode = mode
 	end
 	pcall(set_camera_mode, 3)
@@ -1915,7 +1778,6 @@ local function placeCamera(pos, look, stay)
 	end
 end
 
----"camera" hook. Returning 1 tells the game the script placed the camera this frame.
 function MS.onCamera()
 	MS.camStats.hookCalls = MS.camStats.hookCalls + 1
 	if (MS.camReenableAfter) then
@@ -1932,20 +1794,12 @@ function MS.onCamera()
 	return 1
 end
 
----Puts the camera mode back to what it was before Mod Studio's first focus
 function MS.restoreCameraMode()
 	if (MS.prevCamMode ~= nil) then
 		pcall(set_camera_mode, MS.prevCamMode)
 		MS.prevCamMode = nil
 	end
 end
-
----------------------------------------------------------------------------
--- Zooming while dragging. The game blocks its own zoom while the mouse camera
--- is off, and there's more than one way to move the camera from a script, so
--- Mod Studio tries each method, checks the camera really moved, and keeps the
--- one that works (saved in settings.camMethod).
----------------------------------------------------------------------------
 
 MS.CAM_METHODS = { "hook", "native", "hold" }
 local METHOD_NAMES = { hook = "camera hook", native = "game's own zoom", hold = "held distance" }
@@ -1955,22 +1809,20 @@ local function camDist()
 	return V.dist(camPos, look), camPos, look
 end
 
----Wheel while click-dragging an object: push it away from / pull it toward the
----camera along the line of sight, so it stays under the cursor
 function MS.dragPush(btn)
 	local drag = G.drag
 	local ctx = MS.gizmoContext()
 	if (not drag or not ctx or (ctx.kind ~= "env" and ctx.kind ~= "player")) then return 1 end
-	-- A whole player is only ever held (preview); there is no pushing it along the view line
+
 	if (ctx.kind == "player" and not drag.held) then return 1 end
 	if (not drag.started) then
 		drag.started = true
 		if (drag.ctx.kind ~= "player") then drag.undoPushed = true; MS.pushUndo("Move") end
-		-- Grab again from the current camera / cursor so nothing jumps
+
 		if (drag.held) then initHeld(drag, G.mouseX or drag.x0, G.mouseY or drag.y0) end
 	end
 	if (drag.held) then
-		-- Held object: the wheel changes its distance from the camera
+
 		local hd = drag.held
 		local step = math.max(0.1, hd.t * 0.1)
 		if (MS.snapActive() and MS.settings.gridStep > 0) then
@@ -2007,8 +1859,7 @@ function MS.dragPush(btn)
 		return 1
 	end
 	MS.translateSelection(V.mul(dir, sign * step))
-	-- From here on the object slides at its new distance from the camera: Stick
-	-- or the floor-level slide would put it straight back where it was
+
 	drag.pushed = true
 	if (drag.handle.type == "direct" or drag.handle.type == "free") then
 		local _, look = camVectors()
@@ -2024,7 +1875,6 @@ function MS.dragPush(btn)
 	return 1
 end
 
----Called for wheel events while dragging. Returns 1 to swallow the event.
 function MS.dragZoom(btn)
 	local f = btn == 4 and 0.82 or (1 / 0.82)
 	local method = MS.settings.camMethod or "hook"
@@ -2033,7 +1883,7 @@ function MS.dragZoom(btn)
 		G.zoomProbe = { method = method, dist0 = d, t0 = clock(), zoomIn = btn == 4 }
 	end
 	if (method == "native") then
-		-- Let this one wheel event through to the game with the mouse camera on
+
 		pcall(enable_mouse_camera_movement)
 		G.reDisableCam = true
 		return nil
@@ -2057,11 +1907,11 @@ local function judgeZoomProbe()
 	local p = G.zoomProbe
 	if (not p or clock() - p.t0 < 0.4) then return end
 	G.zoomProbe = nil
-	if (not G.drag) then return end -- let go too early to tell
+	if (not G.drag) then return end
 	local d = camDist()
 	G.zoomTried = G.zoomTried or {}
 	if (MS.settings.camMethodOk and MS.settings.camMethod == p.method) then
-		-- A method that has worked before only stops when the game won't zoom any further
+
 		if (math.abs(d - p.dist0) <= 0.01) then
 			MS.toast(p.zoomIn and "Can't zoom in any closer" or "Can't zoom out any further")
 		end
@@ -2090,8 +1940,6 @@ local function judgeZoomProbe()
 	end
 end
 
----Per frame: zoom bookkeeping, and keeps the dragged thing under the cursor
----whenever the camera moves (scroll zoom, smooth camera, keyboard camera).
 function MS.tickZoom()
 	if (G.reDisableCam) then
 		G.reDisableCam = nil
@@ -2110,7 +1958,7 @@ function MS.tickZoom()
 	judgeZoomProbe()
 	local drag = G.drag
 	if (drag and drag.held) then
-		-- Held object: re-place it with this frame's camera (also when only the camera moved)
+
 		MS.tickHeld(drag)
 	elseif (drag and G.dragCam and G.mouseX) then
 		local camPos, look = camVectors()
@@ -2129,9 +1977,6 @@ local function camFrame(pos, look)
 	return fwd, right, V.norm(V.cross(right, fwd))
 end
 
----The game camera moved (WASD slides or swings it around): bring the held
----object along so it keeps its place in view (kept to the handle's axis /
----plane). Mod Studio's own zoom leaves it where it is.
 function MS.carryWithCamera(drag, old, new)
 	if (drag.held) then return end
 	if (MS.camAnim or MS.camRequest or G.camHold or G.zoomProbe) then return end
@@ -2151,7 +1996,7 @@ function MS.carryWithCamera(drag, old, new)
 	elseif (h.type == "direct" and not h.cameraPlane and not drag.pushed) then
 		d[3] = 0
 	elseif (h.type ~= "direct" and h.type ~= "free") then
-		return -- rotating / scaling
+		return
 	end
 	if (V.len(d) < 1e-6) then return end
 	if (not drag.started) then
@@ -2162,19 +2007,15 @@ function MS.carryWithCamera(drag, old, new)
 	MS.translateSelection(d)
 end
 
----The camera moved mid-drag (zoom, WASD, smooth camera). Don't touch the object:
----just mark the drag so the next mouse update re-anchors it with the camera as
----the game currently sees it (mouse rays can lag a frame behind the camera).
 function MS.rebaseDrag()
 	if (G.drag and not G.drag.held) then G.drag.needRebase = true end
 end
 
----Re-anchors the drag at screen point (x, y) using the current camera
 local function rebaseAt(drag, x, y)
 	drag.needRebase = nil
 	local ctx = MS.gizmoContext()
 	if (not ctx) then return end
-	-- Whole player: the preview already holds this much, new moves are relative to it
+
 	if (drag.pTotal) then drag.pBase = drag.pTotal end
 	drag.items = captureItems(ctx)
 	drag.pivot0 = V.copy(ctx.pivot)
@@ -2193,7 +2034,6 @@ local function rebaseAt(drag, x, y)
 end
 MS.rebaseAt = rebaseAt
 
----Size of what's currently selected/targeted (for camera framing)
 local function targetSize()
 	local list = MS.selList()
 	local size = 1
@@ -2221,15 +2061,13 @@ function MS.focusSelection()
 	MS.cameraTo(ctx.pivot, nil, math.max(3, size * 1.8 + 1.5), nil, true)
 end
 
----Tori's facing as the game draws him: forward and right along the floor.
----Falls back to world axes if the body can't be read.
 function MS.toriAxes()
 	local r, l = MS.bodyWorld(0, 5), MS.bodyWorld(0, 8)
 	if (r and l) then
 		local right = { r.pos[1] - l.pos[1], r.pos[2] - l.pos[2], 0 }
 		if (V.len(right) > 1e-3) then
 			right = V.norm(right)
-			-- Facing +Y with the right side at +X gives forward = up x right
+
 			local fwd = V.norm(V.cross({ 0, 0, 1 }, right))
 			return fwd, right
 		end
@@ -2237,7 +2075,6 @@ function MS.toriAxes()
 	return { 0, 1, 0 }, { 1, 0, 0 }
 end
 
----Camera views relative to Tori: front = looking at his face, side = from his right
 function MS.viewFrom(which)
 	local ctx = MS.gizmoContext()
 	local target = ctx and ctx.pivot
@@ -2248,7 +2085,7 @@ function MS.viewFrom(which)
 	local fwd, right = MS.toriAxes()
 	local up = { 0, 0, 1 }
 	local dirs = {
-		-- Straight down, nudged back so Tori faces the top of the screen
+
 		top = V.norm(V.add(up, V.mul(fwd, -0.02))),
 		front = V.norm(V.add(fwd, V.mul(up, 0.15))),
 		side = V.norm(V.add(right, V.mul(up, 0.15))),
@@ -2256,10 +2093,6 @@ function MS.viewFrom(which)
 	}
 	MS.cameraTo(target, dirs[which] or dirs.iso, math.max(6, ((ctx and ctx.kind == "env") and targetSize() or 1) * 2 + 3), nil, true)
 end
-
----------------------------------------------------------------------------
--- Input hooks
----------------------------------------------------------------------------
 
 local function interactive()
 	return MS.active and not MS.testMode and not (MS.UI and MS.UI.modalOpen) and TB_MENU_MAIN_ISOPEN ~= 1
@@ -2269,16 +2102,16 @@ function MS.onMouseDown(btn, x, y)
 	if (not interactive()) then return end
 	local wheel = btn == 4 or btn == 5
 	if (wheel) then
-		-- A wheel event's x / y is the scroll amount, not the cursor position
+
 		x, y = MOUSE_X or G.mouseX or x, MOUSE_Y or G.mouseY or y
 	end
-	-- Mid-drag the wheel always belongs to the drag, even over a panel
+
 	if (not (wheel and G.drag) and MS.UI.isOverUI(x, y)) then
-		-- Wheel over a panel scrolls it instead of zooming the camera
+
 		if ((btn == 4 or btn == 5) and MS.UI.handleWheel and MS.UI.handleWheel(x, y, btn)) then return 1 end
 		return
 	end
-	-- Clicking the world takes focus away from any text box so shortcuts work again
+
 	MS.UI.blurFields()
 	if (btn == 3) then
 		if (G.drag) then
@@ -2299,13 +2132,11 @@ function MS.onMouseDown(btn, x, y)
 	end
 	if (btn ~= 1) then return end
 
-	-- 0) Measure tool: click two points
 	if (MS.settings.tool == "measure") then
 		MS.measureClick(x, y)
 		return 1
 	end
 
-	-- 0b) Dojo resize handle (Bodies > Place)
 	local dh = MS.frame and MS.frame.dojoHandle
 	if (dh and dh.ok and (x - dh[1]) ^ 2 + (y - dh[2]) ^ 2 < 140) then
 		MS.pushUndo("Dojo size")
@@ -2314,14 +2145,12 @@ function MS.onMouseDown(btn, x, y)
 		return 1
 	end
 
-	-- 1) Gizmo handles
 	local h = MS.gizmoHit(x, y)
 	if (h) then
 		MS.beginDrag(h, x, y)
 		return 1
 	end
 
-	-- 2) Triangle corner dots
 	local tri, key = vertexHit(x, y)
 	if (tri) then
 		MS.vertexSel = { tri = tri, key = key }
@@ -2331,10 +2160,6 @@ function MS.onMouseDown(btn, x, y)
 		return 1
 	end
 
-	-- 3) Body parts / joints (own ray picking against the drawn bodies),
-	--    unless an object is closer to the camera
-	--    Whatever is nearest wins, and its tab opens: a body part -> Bodies, a joint -> Joints.
-	--    Picking a parent or a link end only takes objects.
 	local idx, objDist = pickObj(x, y)
 	objDist = objDist or math.huge
 	local picking = MS.UI.parentPick or (tabOpen("links") and MS.UI.linkPick)
@@ -2343,11 +2168,11 @@ function MS.onMouseDown(btn, x, y)
 		local jp, jj, jt = MS.pickJoint(x, y)
 		bt = (bp ~= nil and bt) or math.huge
 		jt = (jp ~= nil and jt) or math.huge
-		-- Joints sit in the ends of the body parts: the open tab wins a near tie
+
 		if (tabOpen("players")) then jt = jt + 0.05 elseif (tabOpen("joints")) then bt = bt + 0.05 end
 		if (bt < objDist and bt <= jt) then
 			if (not tabOpen("players")) then MS.UI.selectTab("players") end
-			-- Clicking only selects: the whole player moves with its gizmo in Place mode
+
 			MS.UI.selectBody(bp, bb)
 			return 1
 		elseif (jt < objDist) then
@@ -2357,7 +2182,6 @@ function MS.onMouseDown(btn, x, y)
 		end
 	end
 
-	-- 4) Objects
 	if (MS.UI.parentPick) then
 		if (idx) then
 			MS.UI.finishParentPick(idx)
@@ -2383,11 +2207,10 @@ function MS.onMouseDown(btn, x, y)
 			MS.primary = idx
 			MS.UI.requestRefresh()
 		end
-		-- Clicking only selects: objects move with the gizmo or by typing values
+
 		return 1
 	end
 
-	-- 5) Empty space: Shift+drag box-selects, plain click deselects
 	if (shiftDown()) then
 		G.marquee = { x0 = x, y0 = y, x1 = x, y1 = y, active = false }
 		pcall(disable_mouse_camera_movement)
@@ -2410,7 +2233,7 @@ function MS.onMouseMove(x, y)
 			local _, kind = MS.dojoShape()
 			local r
 			if (kind == 0) then
-				-- Square: half-width is the bigger of the X/Y distances
+
 				r = math.max(abs(hit[1] - c[1]), abs(hit[2] - c[2]))
 			else
 				r = V.dist({ hit[1], hit[2], 0 }, c)
@@ -2491,7 +2314,6 @@ function MS.onMouseUp(btn, x, y)
 	end
 end
 
--- SDL2 keycodes with SDL1 fallbacks
 local KEYS = {
 	up = { [1073741906] = true, [273] = true },
 	down = { [1073741905] = true, [274] = true },
@@ -2505,7 +2327,7 @@ local KEYS = {
 	f3 = { [1073741884] = true, [284] = true },
 	f4 = { [1073741885] = true, [285] = true },
 	f9 = { [1073741890] = true, [290] = true },
-	-- Full stop on the number pad (Focus, like Blender's "view selected")
+
 	kpdot = { [1073741923] = true, [266] = true }
 }
 
@@ -2530,9 +2352,7 @@ end
 function MS.onKeyDown(key)
 	if (not interactive()) then return end
 	if (MS.UI.fieldFocused()) then
-		-- A Mod Studio text field has the keyboard: the game's own hotkeys (Space, C / X / Z ...) must stay quiet.
-		-- The UI manager's hook already swallows keys while a field is active; this covers the gap where a
-		-- field is focused but the menu keyboard isn't on, so the key would fall through to the game.
+
 		if (TB_MENU_INPUT_ISACTIVE ~= true) then return 1 end
 		return
 	end
@@ -2542,8 +2362,7 @@ function MS.onKeyDown(key)
 	local ctrl, shift = ctrlDown(), shiftDown()
 	local handled = true
 	local ch = (key >= 32 and key < 127) and string.char(key):lower() or nil
-	-- With Ctrl held some systems deliver the control character (Ctrl+A = 1 ... Ctrl+Z = 26) instead of the letter.
-	-- Backspace, Tab and Enter (8, 9, 13) are real keys, so they are not read as Ctrl+H, I, M.
+
 	if (not ch and ctrl and key >= 1 and key <= 26 and key ~= 8 and key ~= 9 and key ~= 13) then
 		ch = string.char(96 + key)
 	end
@@ -2605,7 +2424,7 @@ function MS.onKeyDown(key)
 	elseif (ch == "g") then
 		MS.UI.toggleSnap()
 	elseif (ch == "." or KEYS.kpdot[key]) then
-		-- Not F: that's the game's save-replay key
+
 		MS.focusSelection()
 	elseif (ch == "h") then
 		MS.UI.toggleHelp()

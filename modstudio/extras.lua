@@ -1,18 +1,9 @@
--- Mod Studio: extras
---   * TBM tab: a line-by-line text editor for the .tbm file you're making
---   * History tab: every undo step, click one to jump straight to it
---   * Hide / isolate objects in the editor (they still export and play normally)
---   * Copy / paste properties (look, physics, thrust, trigger) between objects
+
 
 local MS = MS
 local UI = MS.UI
 
 local ROW, GAP, PAD = 22, 2, 4
-
----------------------------------------------------------------------------
--- Hide / isolate. Hidden objects are made invisible in the editor only: the
--- cached values (what gets saved, exported and tested) are never changed.
----------------------------------------------------------------------------
 
 function MS.isHidden(idx)
 	local m = MS.meta[idx]
@@ -21,7 +12,6 @@ function MS.isHidden(idx)
 	return m.hidden == true
 end
 
----Pushes the right visibility for one object to the engine
 function MS.syncHidden(idx)
 	local o = MS.objs[idx]
 	if (not o) then return end
@@ -29,7 +19,7 @@ function MS.syncHidden(idx)
 		pcall(set_mod_envobj, idx, "visible", MS.toEngine("visible", false))
 		pcall(set_mod_envobj, idx, "color_a", 0)
 	elseif (MS.modelBoxHidden and MS.modelBoxHidden[idx] and not MS.revealing) then
-		-- Object carries a previewed 3D model: only its plain box is hidden (editor only)
+
 		pcall(set_mod_envobj, idx, "visible", MS.toEngine("visible", o.visible ~= false))
 		pcall(set_mod_envobj, idx, "color_a", 0)
 	else
@@ -50,7 +40,6 @@ function MS.anyHidden()
 	return false
 end
 
----Shows everything for real (export, test, close), then `fn`, then hides again
 function MS.withHiddenRevealed(fn, ...)
 	if (not MS.anyHidden()) then return fn(...) end
 	MS.revealing = true
@@ -105,7 +94,6 @@ function MS.showAll()
 	MS.toast(n > 0 and ("Showing all " .. n .. " hidden item" .. (n == 1 and "" or "s")) or "Nothing is hidden")
 end
 
----Hides everything except the selection (and its children). Run again to show all.
 function MS.isolateSelected()
 	if (MS.isolated) then
 		MS.showAll()
@@ -127,7 +115,6 @@ function MS.isolateSelected()
 	MS.toast("Isolated the selection - Ctrl+I again (or Ctrl+Shift+H) shows everything")
 end
 
--- Keep the editor-only hiding in place whenever the engine copy is rewritten
 local origObjSet = MS.objSet
 function MS.objSet(idx, f, v)
 	origObjSet(idx, f, v)
@@ -154,7 +141,7 @@ end
 
 local origReloadAll = MS.reloadAll
 function MS.reloadAll()
-	-- Read the real values back, not the "hidden" ones
+
 	if (MS.objs and next(MS.objs) and MS.anyHidden()) then
 		MS.revealing = true
 		MS.syncAllHidden()
@@ -201,17 +188,12 @@ function UI.exitTest()
 	end
 end
 
----Called by MS.shutdown so the mod maker never keeps editor-only hiding
 function MS.revealAllHidden()
 	MS.revealing = true
 	MS.syncAllHidden()
 	MS.flush()
 	MS.revealing = false
 end
-
----------------------------------------------------------------------------
--- Copy / paste properties
----------------------------------------------------------------------------
 
 MS.PROP_GROUPS = {
 	look = { "color_r", "color_g", "color_b", "color_a", "visible" },
@@ -235,7 +217,7 @@ function MS.copyProps(group)
 			if (o[f] ~= nil) then vals[f] = o[f] end
 		end
 	end
-	-- A triangle's slices each carry a share of its mass: copy the whole triangle's
+
 	if (tri and vals.mass and tri.props and tri.props.mass) then vals.mass = tri.props.mass end
 	local label = group == "all" and "all" or group
 	MS.propClip = { label = label, vals = vals, from = MS.objName(MS.primary) }
@@ -275,11 +257,6 @@ function MS.pasteProps()
 	UI.requestRefresh()
 end
 
----------------------------------------------------------------------------
--- Undo history: jump to any step in one go
----------------------------------------------------------------------------
-
----Goes back to the state saved in undoStack[k] (before step k)
 function MS.undoTo(k)
 	local n = #MS.undoStack
 	if (k < 1 or k > n) then return end
@@ -297,7 +274,6 @@ function MS.undoTo(k)
 	MS.toast("Went back " .. (n - k + 1) .. " step" .. (n - k == 0 and "" or "s"))
 end
 
----Redoes up to and including redoStack[m] (the top of the stack is the next redo)
 function MS.redoTo(m)
 	local n = #MS.redoStack
 	if (m < 1 or m > n) then return end
@@ -349,7 +325,7 @@ function UI.tabHistory(pane)
 			UI.button(holder, 0, ry, rw, ROW, text, fn, { align = LEFTMID, scale = "body", active = o.active, color = o.dim and UI.C.darkest or nil, tip = o.tip })
 		end })
 	end
-	-- Oldest first: "Start", then each step; the current state is highlighted
+
 	row("Start of history", function() MS.undoTo(1); UI.requestRefresh() end, { active = nu == 0, tip = "The state before the oldest step kept (" .. MS.MAX_UNDO .. " steps are kept)" })
 	for i = 1, nu do
 		local idx = i
@@ -365,7 +341,7 @@ function UI.tabHistory(pane)
 			UI.requestRefresh()
 		end, { dim = true, tip = "Redo up to this step" })
 	end
-	-- Start the list scrolled so the current step is in view
+
 	if (UI.historySeen ~= nu + nr) then
 		UI.historySeen = nu + nr
 		UI.pages.history = math.max(1, nu - 6)
@@ -373,16 +349,9 @@ function UI.tabHistory(pane)
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "history")
 end
 
----------------------------------------------------------------------------
--- TBM editor: open the mod file as text, edit any line, save it and load it
--- back into the mod maker.
----------------------------------------------------------------------------
-
 UI.tbm = UI.tbm or { name = nil, lines = nil, dirty = false, filter = "" }
 local T = UI.tbm
 
----io.open for a path inside the Toribash folder (data/mod/...). Tries the
----game-root form first, then the path relative to data/script.
 local function openGameFile(path, mode)
 	local ok, f = pcall(io.open, path, mode, 1)
 	if (ok and f) then return f end
@@ -433,13 +402,11 @@ function MS.tbmWrite()
 	return true
 end
 
----Exports what's in the mod maker right now and opens that file
 function MS.tbmFromEditor()
 	local written = MS.exportMod(MS.saveName or "Untitled")
 	if (written) then MS.tbmRead(tostring(written)) end
 end
 
----Saves the text and rebuilds the mod maker from it
 function MS.tbmApply()
 	if (not T.lines) then return end
 	UI.confirm("Load this file into the mod maker?",
@@ -490,7 +457,6 @@ function UI.tabTBM(pane)
 		return
 	end
 
-	-- Section filter + search
 	local sw = (w * 0.62 - GAP * (#SECTIONS - 1)) / #SECTIONS
 	for i, sec in ipairs(SECTIONS) do
 		UI.button(pane, PAD + (i - 1) * (sw + GAP), y, sw, ROW, sec[2], function()

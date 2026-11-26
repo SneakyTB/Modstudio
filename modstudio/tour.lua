@@ -1,6 +1,4 @@
--- Mod Studio: first-run tour. Small boxes that point at the main features, one at a time.
--- Shows by itself the first time Mod Studio opens; Skip ends it at any step. Replay it from
--- Settings or the help screen (H).
+
 
 local MS = MS
 local UI = MS.UI
@@ -24,7 +22,6 @@ local function sideOf(id)
 	return nil
 end
 
----Opens tab `id` and points at the whole panel
 local function panel(id)
 	return function()
 		if (not (UI.isTabOpen and UI.isTabOpen(id))) then UI.selectTab(id) end
@@ -33,12 +30,10 @@ local function panel(id)
 	end
 end
 
----Points at a top bar button (by its label, or key)
 local function toolbar(key)
 	return function() return rectOf(UI.toolbarBtns and UI.toolbarBtns[key]) end
 end
 
----The free 3D view between the panels
 local function viewport()
 	local x0, x1, y0, y1 = 0, WIN_W, 0, WIN_H
 	local tb = UI.toolbar
@@ -91,7 +86,6 @@ local function killEls()
 	end
 end
 
----Ends the tour. silent: just remove it (Mod Studio is closing); otherwise it counts as seen.
 function UI.tourStop(silent)
 	local st = UI.tourState
 	killEls()
@@ -103,7 +97,7 @@ function UI.tourStop(silent)
 		MS.settings.firstRun = false
 		MS.saveSettings()
 	end
-	-- Put the tabs back the way they were
+
 	if (st.docks and UI.dockState) then
 		for side, d in pairs(st.docks) do UI.dockState[side] = d end
 		if (UI.saveDockState) then UI.saveDockState() end
@@ -117,7 +111,7 @@ local function place(r, W, H)
 	local function clampY(y) return math.max(margin, math.min(WIN_H - H - margin, y)) end
 	if (not r) then return floor((WIN_W - W) / 2), floor((WIN_H - H) / 2) end
 	local cx = r[1] + r[3] / 2
-	-- Below, above, right, left of the target; a big target (a panel) gets the box inside its edge
+
 	if (r[2] + r[4] + gap + H <= WIN_H - margin) then return clampX(cx - W / 2), r[2] + r[4] + gap end
 	if (r[2] - gap - H >= margin) then return clampX(cx - W / 2), r[2] - gap - H end
 	local cy = r[2] + r[4] / 2
@@ -126,7 +120,6 @@ local function place(r, W, H)
 	return clampX(cx - W / 2), clampY(cy - H / 2)
 end
 
----Shows step i
 function UI.tourShow(i)
 	local st = UI.tourState
 	if (not st) then return end
@@ -136,7 +129,7 @@ function UI.tourShow(i)
 	local ok, r = true, nil
 	if (step.target) then ok, r = pcall(step.target) end
 	if (not ok) then r = nil end
-	-- A panel is big: point at the middle of its edge-facing area instead of hiding it
+
 	local ROW, GAP = UI.sizes()
 	local W = math.min(330, WIN_W - 40)
 	local sc = UI.textSize("body") * UI.textK
@@ -149,8 +142,7 @@ function UI.tourShow(i)
 		probe.size.h = msgH
 	end
 	probe:kill()
-	-- The fit check can pass by shrinking the text, so also size it from the text's width:
-	-- lines it wraps onto x line height (font 4 is about 34 px tall at scale 1)
+
 	local okw, tw = pcall(get_string_length, step.text, 4)
 	if (okw and type(tw) == "number") then
 		local lines = math.ceil(tw * sc * 1.12 / (W - 28))
@@ -158,7 +150,6 @@ function UI.tourShow(i)
 	end
 	local H = 34 + msgH + 8 + ROW + 14
 
-	-- If the target is too big to sit beside (a whole panel), the box goes over its middle
 	local bx, by
 	if (r and r[3] * r[4] > WIN_W * WIN_H * 0.12) then
 		bx = floor(math.max(8, math.min(WIN_W - W - 8, r[1] + (r[3] - W) / 2)))
@@ -167,7 +158,6 @@ function UI.tourShow(i)
 		bx, by = place(r, W, H)
 	end
 
-	-- Frame round the feature + a line from the box to it
 	if (r) then
 		local fx, fy, fw, fh = r[1] - 3, r[2] - 3, r[3] + 6, r[4] + 6
 		local frame = UIElement:new({ globalid = TB_MENU_HUB_GLOBALID, pos = { 0, 0 }, size = { WIN_W, WIN_H } })
@@ -179,7 +169,7 @@ function UI.tourShow(i)
 			draw_quad(fx, fy + fh - t, fw, t)
 			draw_quad(fx, fy, t, fh)
 			draw_quad(fx + fw - t, fy, t, fh)
-			-- Connector: straight out of the box towards the target
+
 			local tx = math.max(fx, math.min(fx + fw, bx + W / 2))
 			local ty = math.max(fy, math.min(fy + fh, by + H / 2))
 			if (by >= fy + fh) then
@@ -215,7 +205,6 @@ function UI.tourShow(i)
 	UI.raiseOverlays()
 end
 
----Starts the tour from the first step
 function UI.tourStart()
 	if (UI.help and UI.toggleHelp) then
 		UI.help:kill()
