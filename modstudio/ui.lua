@@ -133,7 +133,7 @@ end
 
 ---Every top-level piece of UI (docks, toolbar, status, overlays)
 function UI.roots()
-	local list = { UI.dialog, UI.help, UI.toolbar, UI.status, UI.testBar }
+	local list = { UI.dialog, UI.help, UI.tour, UI.toolbar, UI.status, UI.testBar }
 	for _, el in pairs(UI.dockEls or {}) do table.insert(list, el) end
 	return list
 end
@@ -1161,7 +1161,7 @@ local function objTransformEntries()
 	} })
 	table.insert(entries, { kind = "buttons", items = {
 		{ "Duplicate", MS.duplicateSelected, icon = "copy", tip = "Ctrl+D" },
-		{ "Focus camera", MS.focusSelection, icon = "focus", tip = "F" },
+		{ "Focus camera", MS.focusSelection, icon = "focus", tip = ". (full stop)" },
 		{ "Delete", MS.deleteSelected, icon = "trash", tip = "Delete key" }
 	} })
 	return entries
@@ -2586,7 +2586,7 @@ function UI.tabWorld(pane)
 			{ "Side", function() MS.viewFrom("side") end }, { "3/4", function() MS.viewFrom("iso") end }
 		} },
 		{ kind = "buttons", items = {
-			{ "Focus selection (F)", MS.focusSelection, icon = "focus" },
+			{ "Focus selection (.)", MS.focusSelection, icon = "focus" },
 			{ "Look at players", function() MS.cameraTo({ 0, 0, 1 }, nil, 6, nil, true) end }
 		} },
 		{ kind = "header", label = "Overview" },
@@ -2888,6 +2888,7 @@ function UI.tabSettings(pane)
 			options = { { 1, "Default" }, { 2, "Alternative" } } },
 		{ kind = "buttons", items = {
 			{ "Show help", function() UI.toggleHelp(true) end },
+			{ "Take the tour", function() if (UI.tourStart) then UI.tourStart() end end, tip = "A step-by-step look at the main features" },
 			{ "Reset settings", function()
 				MS.settings = MS.deepcopy(MS.DEFAULT_SETTINGS)
 				MS.settings.firstRun = false
@@ -3315,7 +3316,8 @@ function UI.buildDock(side)
 	for i, t in ipairs(def.tabs) do
 		local id = t[1]
 		local isActive = st.open and st.active == id
-		local tabBtn = button(inner, 2 + (i - 1) * (tw + GAP), 3, tw, ROW, t[2], function()
+		local tabBtn
+		tabBtn = button(inner, 2 + (i - 1) * (tw + GAP), 3, tw, ROW, t[2], function()
 			if (st.open and st.active == id) then
 				st.open = false
 			else
@@ -3326,6 +3328,9 @@ function UI.buildDock(side)
 		end, { color = isActive and C.bg or C.dark, scale = "body",
 			icon = UI.TAB_ICONS[id], noAutoIcon = true, fit = tabFit, mode = tabMode,
 			tip = isActive and "Click again to tuck this panel away" or t[2] })
+		-- The tour points at tabs by id
+		UI.tabBtns = UI.tabBtns or {}
+		UI.tabBtns[id] = tabBtn
 		-- Active tab: panel colour with an accent underline
 		if (isActive) then
 			tabBtn:addChild({ pos = { 0, ROW - 2 }, size = { tw, 2 }, bgColor = C.lightest })
@@ -3431,6 +3436,7 @@ function UI.statusH() return ROW + 4 end
 
 function UI.buildToolbar()
 	if (UI.toolbar) then UI.toolbar:kill() end
+	UI.toolbarBtns = {}
 	if (not MS.active) then return end
 	local st = MS.settings
 	local items = {
@@ -3446,12 +3452,12 @@ function UI.buildToolbar()
 		false,
 		{ "Undo", MS.undo, false, "Ctrl+Z" },
 		{ "Redo", MS.redo, false, "Ctrl+Y" },
-		{ "Focus", MS.focusSelection, false, "F - Point the camera at the selection" },
+		{ "Focus", MS.focusSelection, false, ". (full stop) - Point the camera at the selection" },
 		{ "Test", function() UI.enterTest() end, false, "Play the mod, then come back to editing" },
 		{ "Look", function() UI.selectTab("settings") end, false, "Colours, panel colour and interface size (Settings tab)" },
 		{ "Help", function() UI.toggleHelp() end, false, "H - Shortcuts and tips" },
 		false,
-		{ st.autosave and ("Auto " .. (st.autosaveMinutes or 5) .. "m") or "Auto off", UI.toggleAutosave, st.autosave, UI.autosaveTip },
+		{ st.autosave and ("Auto " .. (st.autosaveMinutes or 5) .. "m") or "Auto off", UI.toggleAutosave, st.autosave, UI.autosaveTip, key = "Auto" },
 		false,
 		{ "Close", function() MS.close() end, false, "Close Mod Studio" }
 	}
@@ -3486,7 +3492,8 @@ function UI.buildToolbar()
 	local x = 3 + 16 + GAP + titleW
 	for _, it in ipairs(items) do
 		if (it) then
-			button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = "body", noAutoIcon = true, fit = barFit })
+			-- Kept by label (or key) so the tour can point at them
+			UI.toolbarBtns[it.key or it[1]] = button(bar, x, 3, bw, h, it[1], it[2], { active = it[3], tip = it[4], scale = "body", noAutoIcon = true, fit = barFit })
 			x = x + bw + GAP
 		else
 			x = x + 10
@@ -3594,7 +3601,7 @@ UI.HELP = {
 	{ "Getting around", true },
 	{ "Panels", "Left: Scene. Right: Properties. Bottom: File/Rules/Stats. Click an open tab to tuck it away" },
 	{ "Right-drag", "Turn the camera (same as normal Toribash)" },
-	{ "F", "Point the camera at what's selected" },
+	{ ". (full stop)", "Point the camera at what's selected" },
 	{ "Selecting", true },
 	{ "Click", "Select an object, body part or joint (opens its tab)" },
 	{ "Shift+click", "Add / remove from the selection" },
@@ -3644,7 +3651,7 @@ end
 ---Re-queues the help and dialog overlays so they draw (and take the mouse) above anything built after them.
 ---toriui draws in show order and hands the mouse to the last shown element; hide + show moves an element to the end.
 function UI.raiseOverlays()
-	for _, el in ipairs({ UI.help, UI.dialog }) do
+	for _, el in ipairs({ UI.tourFrame, UI.tour, UI.help, UI.dialog }) do
 		if (el and not el.destroyed) then
 			el:hide()
 			el:show()
@@ -3749,10 +3756,16 @@ function UI.toggleHelp(force)
 			label(inner, x0 + 18 + keyW + 4, y, colW - keyW - 30, rowH, row[2], LEFTMID, "body")
 		end
 	end
-	local btn = button(inner, W / 2 - 80, inner.size.h - 36, 160, 28, MS.settings.firstRun and "Let's go!" or "Close (H)", function() UI.toggleHelp() end)
-	-- Black text would vanish on the dark button
-	btn.uiColor = { 1, 1, 1, 1 }
-	for _, c in ipairs(btn.child) do c.uiColor = btn.uiColor end
+	local btn = button(inner, W / 2 - 166, inner.size.h - 36, 160, 28, MS.settings.firstRun and "Let's go!" or "Close (H)", function() UI.toggleHelp() end)
+	local tourBtn = button(inner, W / 2 + 6, inner.size.h - 36, 160, 28, "Take the tour", function()
+		UI.toggleHelp()
+		if (UI.tourStart) then UI.tourStart() end
+	end, { tip = "A step-by-step look at the main features" })
+	-- Black text would vanish on the dark buttons
+	for _, b in ipairs({ btn, tourBtn }) do
+		b.uiColor = { 1, 1, 1, 1 }
+		for _, c in ipairs(b.child) do c.uiColor = b.uiColor end
+	end
 	UI.raiseOverlays()
 end
 
@@ -3911,6 +3924,7 @@ function UI.open()
 end
 
 function UI.close()
+	if (UI.tourStop) then UI.tourStop(true) end
 	for _, key in ipairs({ "dialog", "help", "toolbar", "status", "testBar" }) do
 		if (UI[key] and not UI[key].destroyed) then UI[key]:kill() end
 		UI[key] = nil

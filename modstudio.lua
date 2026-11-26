@@ -30,6 +30,7 @@ dofile("modstudio/icons.lua")
 dofile("modstudio/extras.lua")
 dofile("modstudio/models.lua")
 dofile("modstudio/limbs.lua")
+dofile("modstudio/tour.lua")
 
 local MS = MS
 
@@ -187,7 +188,8 @@ function MS.start()
 	MS.hideGameHud()
 	MS.UI.open()
 	if (MS.settings.firstRun) then
-		MS.UI.toggleHelp(true)
+		-- First time: a short guided tour (skippable; it can be replayed from Settings or H)
+		if (MS.UI.tourStart) then MS.UI.tourStart() else MS.UI.toggleHelp(true) end
 	end
 	MS.toast("Mod Studio " .. MS.VERSION .. " ready - press H any time for help")
 end

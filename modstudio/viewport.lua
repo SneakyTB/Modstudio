@@ -2504,7 +2504,9 @@ local KEYS = {
 	f2 = { [1073741883] = true, [283] = true },
 	f3 = { [1073741884] = true, [284] = true },
 	f4 = { [1073741885] = true, [285] = true },
-	f9 = { [1073741890] = true, [290] = true }
+	f9 = { [1073741890] = true, [290] = true },
+	-- Full stop on the number pad (Focus, like Blender's "view selected")
+	kpdot = { [1073741923] = true, [266] = true }
 }
 
 local consumed = {}
@@ -2602,7 +2604,8 @@ function MS.onKeyDown(key)
 		MS.UI.toggleSpace()
 	elseif (ch == "g") then
 		MS.UI.toggleSnap()
-	elseif (ch == "f") then
+	elseif (ch == "." or KEYS.kpdot[key]) then
+		-- Not F: that's the game's save-replay key
 		MS.focusSelection()
 	elseif (ch == "h") then
 		MS.UI.toggleHelp()

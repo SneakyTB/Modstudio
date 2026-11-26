@@ -24,6 +24,7 @@ list, multi-select, generators, 3D model assets, a built-in .tbm text editor and
 - Player placement, with "Face the other way"
 - F1-F4 tools (Select, Move, Rotate, Scale) and F9 Measure
 - In-game help window (H)
+- First-run guided tour: small boxes point at each feature (skippable; replay it from Settings or the help window)
 - Built-in TBM text editor
 - Library prefabs
 - Undo/redo with history; the unsaved-changes warning clears when you undo back to the last export or load
