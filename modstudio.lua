@@ -29,6 +29,7 @@ dofile("modstudio/ui.lua")
 dofile("modstudio/icons.lua")
 dofile("modstudio/extras.lua")
 dofile("modstudio/models.lua")
+dofile("modstudio/limbs.lua")
 
 local MS = MS
 
@@ -50,6 +51,8 @@ local function closeBuiltinModMaker()
 		end
 	end)
 end
+
+MS.closeBuiltinModMaker = closeBuiltinModMaker
 
 ---Hides the game's HUD while editing; remembers the player's setting so it can be put back
 function MS.hideGameHud()
@@ -73,6 +76,8 @@ function MS.restoreGameHud()
 end
 
 function MS.tick()
+	if (MS.runFrameJobs) then MS.runFrameJobs() end
+	if (MS.resetting) then return end
 	MS.tickCamera()
 	MS.tickZoom()
 	if (not MS.testMode and not (MS.calib and not MS.calib.done)) then
@@ -85,10 +90,11 @@ function MS.tick()
 	MS.lastAutosave = MS.lastAutosave or now
 	-- Wait for a pause in editing so the save never lands mid-scrub
 	local idle = now - (MS.lastEditClock or 0) > 2
-	local every = 60 * math.max(1, tonumber(MS.settings.autosaveMinutes) or 1)
+	local every = 60 * math.max(1, tonumber(MS.settings.autosaveMinutes) or 5)
 	if (MS.settings.autosave and MS.changedSinceAutosave and now - MS.lastAutosave > every and idle and not MS.G.drag) then
 		MS.lastAutosave = now
 		MS.saveProject("_autosave", true)
+		MS.lastAutosaveDone = now
 	end
 end
 

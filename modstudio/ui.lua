@@ -45,9 +45,11 @@ UI.THEMES = {
 	{ "custom", "Custom" }
 }
 
----Square corners setting: every rounded shape asks here for its radius
+---Square corners setting: every rounded shape asks here for its radius.
+---Square gives nil, so toriui skips the ROUNDED shape and draws a plain box: radius 0
+---still drew through the rounded path (corner disks), which kept corners from looking square.
 function UI.r(n)
-	if (MS.settings and MS.settings.squareCorners) then return 0 end
+	if (MS.settings and MS.settings.squareCorners) then return nil end
 	return n
 end
 
@@ -107,6 +109,13 @@ end
 ---------------------------------------------------------------------------
 -- Small helpers
 ---------------------------------------------------------------------------
+
+---Text colour that reads on `bg`: near-black on light colours, white otherwise (matches UI.iconColor)
+function UI.textColorOn(bg)
+	local lum = bg and (bg[1] * 0.3 + bg[2] * 0.59 + bg[3] * 0.11) or 0
+	if (lum > 0.72) then return { 0.12, 0.08, 0.08, 1 } end
+	return { 1, 1, 1, 1 }
+end
 
 function UI.requestRefresh()
 	UI.needRefresh = true
@@ -353,25 +362,65 @@ UI.ICON_MIN = 0.55
 ---  3. icon alone (the label becomes the tooltip) when there is an icon
 ---  4. label alone, cut with "..."
 ---Uses the same width measurement as UI.addText (text area = width - left offset - 4).
+---o.mode (set for a whole group by UI.groupMode) forces one look: "both", "text" or "icon".
 function UI.buttonFit(w, h, text, o)
 	local hasText = text and text ~= ""
-	local icon = o.icon
-	if (not icon and hasText and not o.noAutoIcon) then icon = UI.LABEL_ICONS[text] end
+	local icon = UI.iconFor(text, o)
 	if (not hasText) then return icon, 1, false end
 	local role = o.scale or "body"
+	if (o.mode == "text" or (o.mode and not icon)) then
+		return nil, UI.fitFrac(text, w - (o.align == LEFTMID and 6 or 0) - 4, role, 4), true
+	elseif (o.mode == "icon") then
+		return icon, 1, false
+	end
 	local withIcon = UI.fitFrac(text, w - (h + 2) - 4, role, 4)
+	if (o.mode == "both") then return icon, withIcon, true end
 	if (icon and withIcon >= UI.ICON_MIN) then return icon, withIcon, true end
 	local alone = UI.fitFrac(text, w - (o.align == LEFTMID and 6 or 0) - 4, role, 4)
 	if (alone >= UI.FIT_MIN or not icon) then return nil, alone, true end
 	return icon, 1, false
 end
 
+---The icon a button shows: its own, or the one picked from its label
+function UI.iconFor(text, o)
+	if (o.icon) then return o.icon end
+	if (text and text ~= "" and not o.noAutoIcon) then return UI.LABEL_ICONS[text] end
+	return nil
+end
+
+---One look for a whole group of buttons, so neighbours always match. rows = { { w = , h = , items = } }.
+---Every labelled button has an icon -> icon + label if they all fit, else label only if they all fit,
+---else icon only. Any labelled button without an icon -> label only for the whole group.
+function UI.groupMode(rows)
+	local allIcons, any = true, false
+	for _, r in ipairs(rows) do
+		for _, it in ipairs(r.items) do
+			if (it[1] and it[1] ~= "") then
+				any = true
+				if (not UI.iconFor(it[1], it)) then allIcons = false end
+			end
+		end
+	end
+	if (not any or not allIcons) then return "text" end
+	local both, alone = true, true
+	for _, r in ipairs(rows) do
+		for _, it in ipairs(r.items) do
+			if (it[1] and it[1] ~= "") then
+				local role = it.scale or "body"
+				if (UI.fitFrac(it[1], r.w - (r.h + 2) - 4, role, 4) < UI.ICON_MIN) then both = false end
+				if (UI.fitFrac(it[1], r.w - 4, role, 4) < UI.FIT_MIN) then alone = false end
+			end
+		end
+	end
+	return both and "both" or (alone and "text" or "icon")
+end
+
 ---Appends to `fracs` the label fit of every button in `items` (that shows a label) when each is `w` x `h`
-local function rowFracs(w, h, items, fracs)
+local function rowFracs(w, h, items, fracs, mode)
 	fracs = fracs or {}
 	for _, it in ipairs(items) do
 		if (it[1] and it[1] ~= "") then
-			local _, f, shown = UI.buttonFit(w, h, it[1], { icon = it.icon, scale = it.scale })
+			local _, f, shown = UI.buttonFit(w, h, it[1], { icon = it.icon, scale = it.scale, noAutoIcon = it.noAutoIcon, mode = mode })
 			if (shown) then table.insert(fracs, f) end
 		end
 	end
@@ -390,9 +439,12 @@ local function button(parent, x, y, w, h, text, onClick, o)
 		shapeType = ROUNDED, rounded = UI.r(2),
 		interactive = not o.disabled,
 		bgColor = bg,
-		hoverColor = C.light, pressedColor = C.darkest,
+		-- A lit (accent) button stays lit on hover, so its dark-on-light text stays readable
+		hoverColor = o.active and { bg[1] * 0.9, bg[2] * 0.9, bg[3] * 0.9, 1 } or C.light, pressedColor = C.darkest,
 		inactiveColor = C.darkest
 	})
+	-- Light backgrounds (a White accent, say) get dark text, same rule as the icons
+	b.uiColor = UI.textColorOn(bg)
 	local hasText = text and text ~= ""
 	local icon, ownFit, showText = UI.buttonFit(w, h, text, o)
 	if (icon) then
@@ -411,7 +463,8 @@ local function button(parent, x, y, w, h, text, onClick, o)
 	-- Icon-only buttons show their label as the tooltip
 	local tip = o.tip or ((hasText and not showText) and text or nil)
 	if (tip) then
-		b:addMouseHandlers(nil, nil, function() UI.setTip(tip, b) end)
+		-- A function tip is worked out on hover (e.g. "last autosaved 20 s ago")
+		b:addMouseHandlers(nil, nil, function() UI.setTip(type(tip) == "function" and tip() or tip, b) end)
 	end
 	return b
 end
@@ -420,22 +473,35 @@ UI.button = button
 ---Row of evenly sized buttons. items = { { text, fn, active = , tip = , disabled = } }
 ---All labels in the row share one scale (the smallest fit, floor UI.FIT_MIN) so neighbours match.
 ---`fit` overrides it, for a grid of several rows that must share a scale.
-local function buttonRow(parent, x, y, w, h, items, fit)
+---`mode` (from UI.gridMode) makes a grid of rows share one look; a lone row works its own out.
+local function buttonRow(parent, x, y, w, h, items, fit, mode)
 	local n = #items
 	local bw = (w - GAP * (n - 1)) / n
-	fit = fit or UI.groupFrac(rowFracs(bw, h, items))
+	mode = mode or UI.groupMode({ { w = bw, h = h, items = items } })
+	fit = fit or UI.groupFrac(rowFracs(bw, h, items, nil, mode))
 	for i, it in ipairs(items) do
-		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled, icon = it.icon, fit = fit })
+		button(parent, x + (i - 1) * (bw + GAP), y, bw, h, it[1], it[2], { active = it.active, tip = it.tip, disabled = it.disabled,
+			icon = it.icon, noAutoIcon = it.noAutoIcon, fit = fit, mode = mode })
 	end
 end
 
----Shared scale for a grid made of several rows of items in `w` total width
-function UI.gridFit(w, h, rows)
-	local fracs = {}
+local function gridRows(w, h, rows)
+	local t = {}
 	for _, items in ipairs(rows) do
 		local n = #items
-		if (n > 0) then rowFracs((w - GAP * (n - 1)) / n, h, items, fracs) end
+		if (n > 0) then table.insert(t, { w = (w - GAP * (n - 1)) / n, h = h, items = items }) end
 	end
+	return t
+end
+
+---One look (see UI.groupMode) for a grid made of several rows of items in `w` total width
+function UI.gridMode(w, h, rows) return UI.groupMode(gridRows(w, h, rows)) end
+
+---Shared scale for a grid made of several rows of items in `w` total width
+function UI.gridFit(w, h, rows, mode)
+	local fracs = {}
+	mode = mode or UI.gridMode(w, h, rows)
+	for _, r in ipairs(gridRows(w, h, rows)) do rowFracs(r.w, r.h, r.items, fracs, mode) end
 	return UI.groupFrac(fracs)
 end
 
@@ -623,11 +689,18 @@ local function choiceRow(holder, y, w, e)
 	end
 	-- Long lists wrap onto more rows (give the entry rows = ceil(#options / perRow))
 	local per = e.perRow or #items
+	local rows = {}
 	for r = 0, math.ceil(#items / per) - 1 do
 		local row = {}
 		for i = r * per + 1, math.min(#items, (r + 1) * per) do table.insert(row, items[i]) end
 		while (#row < per and r > 0) do table.insert(row, { "", function() end, disabled = true }) end
-		buttonRow(holder, lw, y + r * (ROW + GAP), w - lw, ROW, row)
+		table.insert(rows, row)
+	end
+	-- Every row of the list shares one look and one label size
+	local mode = UI.gridMode(w - lw, ROW, rows)
+	local fit = UI.gridFit(w - lw, ROW, rows, mode)
+	for r, row in ipairs(rows) do
+		buttonRow(holder, lw, y + (r - 1) * (ROW + GAP), w - lw, ROW, row, fit, mode)
 	end
 end
 
@@ -698,7 +771,7 @@ function UI.renderEntry(holder, y, e, w)
 	elseif (k == "choice") then
 		choiceRow(holder, y, w, e)
 	elseif (k == "buttons") then
-		buttonRow(holder, 0, y, w, ROW, e.items, e.fit)
+		buttonRow(holder, 0, y, w, ROW, e.items, e.fit, e.mode)
 	elseif (k == "swatches") then
 		swatchesRow(holder, y, w, e)
 	elseif (k == "custom") then
@@ -718,8 +791,9 @@ function UI.prepareFits(entries, w)
 				table.insert(rows, entries[j].items)
 				j = j + 1
 			end
-			local fit = UI.gridFit(w, ROW, rows)
-			for k = i, j - 1 do entries[k].fit = fit end
+			local mode = UI.gridMode(w, ROW, rows)
+			local fit = UI.gridFit(w, ROW, rows, mode)
+			for k = i, j - 1 do entries[k].fit, entries[k].mode = fit, mode end
 			i = j
 		else
 			i = i + 1
@@ -2050,6 +2124,17 @@ function UI.selectJoint(p, j)
 	MS.toast("Selected " .. (PLAYER_NAMES[p] or "") .. " " .. MS.jointName(p, j))
 end
 
+-- Selecting an object (3D view, Scene list, anywhere) shows its Properties instead of the
+-- Bodies / Joints tab. Clicking a body part or joint opens its own tab (viewport.lua).
+for _, fnName in ipairs({ "selSet", "selAdd", "selToggle" }) do
+	local orig = MS[fnName]
+	MS[fnName] = function(...)
+		local r = orig(...)
+		if (MS.selCount() > 0 and (UI.isTabOpen("players") or UI.isTabOpen("joints"))) then UI.selectTab("properties") end
+		return r
+	end
+end
+
 function UI.tabPlayers(pane)
 	local w = pane.size.w - PAD * 2
 	MS.bodySel = MS.bodySel or { p = 0, b = 0 }
@@ -2237,6 +2322,7 @@ function UI.tabPlayers(pane)
 		{ "players:thrust", "Thrust", function() return entriesFor("thrust") end },
 		{ "players:trigger", "Trigger", function() return entriesFor("trigger") end },
 		{ "players:tools", "Tools", function() return entriesFor("tools") end },
+		{ "players:limbs", "Add / remove limbs", function() return MS.Limbs and MS.Limbs.bodyEntries(p, b) or {} end },
 		{ "players:place", "Place players + dojo", function() return entriesFor("place") end }
 	})
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "players")
@@ -2373,6 +2459,7 @@ function UI.tabJoints(pane)
 	end
 	local entries = UI.sections({
 		{ "joints:main", "Joint", function() return entriesFor("main") end },
+		{ "joints:limbs", "Add / connect joints", function() return MS.Limbs and MS.Limbs.jointEntries(p, j) or {} end },
 		{ "joints:physics", "Physics", function() return entriesFor("physics") end },
 		{ "joints:trigger", "Trigger", function() return entriesFor("trigger") end },
 		{ "joints:tools", "Tools", function() return entriesFor("tools") end }
@@ -2570,12 +2657,13 @@ function UI.tabFile(pane)
 				MS.settings.autosave = v
 				MS.saveSettings()
 				MS.toast(v and ("Autosave on - every " .. MS.settings.autosaveMinutes .. " min") or "Autosave off - remember to Save project / Export")
+				UI.buildToolbar()
 				UI.requestRefresh()
 			end },
 		{ kind = "choice", label = "Every", tip = "How often to back up (only when something changed)",
 			options = { { 1, "1 min" }, { 2, "2 min" }, { 5, "5 min" }, { 10, "10 min" } },
 			get = function() return MS.settings.autosaveMinutes end,
-			set = function(v) MS.settings.autosaveMinutes = v; MS.saveSettings() end },
+			set = function(v) MS.settings.autosaveMinutes = v; MS.saveSettings(); UI.buildToolbar() end },
 		{ kind = "header", label = "Start from a template (objects + rules)" }
 	}
 	do
@@ -2720,7 +2808,7 @@ function UI.tabSettings(pane)
 		tog("Show parent lines", "showHierarchy", "Purple lines from the selection to its parent and children"),
 		tog("Parent lines for everything", "showAllHierarchy", "Draw every parent line, not just the selection's"),
 		{ kind = "header", label = "Dragging" },
-		tog("Scroll pushes a dragged object", "scrollPush", "While you click-drag an object, the wheel moves it away from / toward the camera. Shift+scroll zooms instead"),
+		tog("Scroll pushes what you drag", "scrollPush", "While you drag the gizmo, the wheel moves the selection away from / toward the camera. Shift+scroll zooms instead"),
 		tog("Alt + gizmo drag makes a copy", "altDuplicate", "Hold Alt when you grab an arrow, ring or handle to drag out a duplicate"),
 		{ kind = "header", label = "Look" },
 		{ kind = "choice", label = "UI size", tip = "Makes every panel, button and text bigger or smaller",
@@ -2748,7 +2836,10 @@ function UI.tabSettings(pane)
 		{ kind = "header", label = "Panels" },
 		{ kind = "hint", rows = 2, label = "Drag the :: handle on a panel, the toolbar or the status bar to move it. Drag the / corner to resize a panel." },
 		{ kind = "buttons", items = { { "Reset panel layout", function() UI.resetLayout() end, tip = "Put every panel back where it started" } } },
+		{ kind = "header", label = "Gizmo" },
 		{ kind = "slider", label = "Gizmo size", min = 50, max = 200, get = function() return st.gizmoSize end, set = function(v) st.gizmoSize = v end },
+		tog("Gizmo centre dot", "gizmoCenter", "Adds a dot in the middle of the gizmo: drag it to move freely (Move) or resize evenly (Scale)"),
+		tog("Gizmo plane squares", "gizmoPlanes", "Adds squares to the Move gizmo: drag one to move on two axes at once"),
 		{ kind = "header", label = "3D view colours" },
 		viewChoice("Selected", "selColor", "Outline on selected objects"),
 		viewChoice("Main pick", "primaryColor", "Outline on the object the gizmo is on (the last one you clicked)"),
@@ -2761,9 +2852,10 @@ function UI.tabSettings(pane)
 			get = function() return floor((tonumber(st.gizmoWidth) or 1) * 100 + 0.5) end, set = function(v) st.gizmoWidth = v / 100 end,
 			onRelease = function() MS.saveSettings() end, labelFn = function(v) return v .. "%" end },
 		{ kind = "header", label = "Saving" },
-		tog("Autosave while I work", "autosave", "Backup goes to the \"_autosave\" project. Recover it from the File tab"),
+		{ kind = "toggle", label = "Autosave while I work", tip = "Backup goes to the \"_autosave\" project. Recover it from the File tab",
+			get = function() return st.autosave end, set = function(v) st.autosave = v; MS.saveSettings(); UI.buildToolbar() end },
 		{ kind = "choice", label = "Autosave every", options = { { 1, "1 min" }, { 2, "2 min" }, { 5, "5 min" }, { 10, "10 min" } },
-			get = function() return st.autosaveMinutes end, set = function(v) st.autosaveMinutes = v; MS.saveSettings() end },
+			get = function() return st.autosaveMinutes end, set = function(v) st.autosaveMinutes = v; MS.saveSettings(); UI.buildToolbar() end },
 		{ kind = "header", label = "Engine units (measured automatically at start)" },
 		{ kind = "hint", rows = 2, scale = "small", label = (function()
 			local c = MS.calib
@@ -3201,9 +3293,12 @@ function UI.buildDock(side)
 	inner:addChild({ pos = { 0, 0 }, size = { inner.size.w, UI.HEADER_H }, bgColor = C.darkest })
 	local n = #def.tabs
 	local tw = (inner.size.w - 4 - (ROW + GAP) * 2 - GAP * (n - 1)) / n
+	local tabItems = {}
+	for _, t in ipairs(def.tabs) do table.insert(tabItems, { t[2], icon = UI.TAB_ICONS[t[1]], noAutoIcon = true }) end
+	local tabMode = UI.groupMode({ { w = tw, h = ROW, items = tabItems } })
 	local tabFracs = {}
 	for _, t in ipairs(def.tabs) do
-		local _, tf = UI.buttonFit(tw, ROW, t[2], { scale = "body", icon = UI.TAB_ICONS[t[1]], noAutoIcon = true })
+		local _, tf = UI.buttonFit(tw, ROW, t[2], { scale = "body", icon = UI.TAB_ICONS[t[1]], noAutoIcon = true, mode = tabMode })
 		table.insert(tabFracs, tf)
 	end
 	local tabFit = UI.groupFrac(tabFracs)
@@ -3229,7 +3324,7 @@ function UI.buildDock(side)
 			UI.linkPick = nil
 			UI.rebuildAfterToggle(side)
 		end, { color = isActive and C.bg or C.dark, scale = "body",
-			icon = UI.TAB_ICONS[id], iconFallback = true, noAutoIcon = true, fit = tabFit,
+			icon = UI.TAB_ICONS[id], noAutoIcon = true, fit = tabFit, mode = tabMode,
 			tip = isActive and "Click again to tuck this panel away" or t[2] })
 		-- Active tab: panel colour with an accent underline
 		if (isActive) then
@@ -3307,6 +3402,22 @@ function UI.toggleSnap()
 	MS.toast("Snapping " .. (MS.settings.snap and "on" or "off") .. " (hold Ctrl to flip it while dragging)")
 end
 
+function UI.toggleAutosave()
+	MS.settings.autosave = not MS.settings.autosave
+	MS.saveSettings()
+	UI.buildToolbar()
+	MS.toast(MS.settings.autosave and ("Autosave on - every " .. (MS.settings.autosaveMinutes or 5) .. " min") or "Autosave off - remember to Save project / Export")
+end
+
+---Toolbar tip for the autosave button: how often, and when it last saved
+function UI.autosaveTip()
+	if (not MS.settings.autosave) then return "Autosave is off. Click to turn it on (Settings > Saving sets how often)" end
+	local ago = MS.lastAutosaveDone and floor(MS.clock() - MS.lastAutosaveDone) or nil
+	return "Autosave is on: every " .. (MS.settings.autosaveMinutes or 5) .. " min to the \"_autosave\" project"
+		.. (ago and (", last saved " .. (ago < 60 and (ago .. " s") or (floor(ago / 60) .. " min")) .. " ago") or " (saves once you change something)")
+		.. ". Click to turn it off"
+end
+
 function UI.toggleGrid()
 	MS.settings.showGrid = not MS.settings.showGrid
 	MS.saveSettings()
@@ -3324,9 +3435,9 @@ function UI.buildToolbar()
 	local st = MS.settings
 	local items = {
 		{ "Select", function() UI.setTool("select") end, st.tool == "select", "F1 - Click objects. Shift+click adds, Shift+drag box-selects" },
-		{ "Move", function() UI.setTool("move") end, st.tool == "move", "F2 - Arrows: one axis. Squares: a plane. Center dot: free" },
+		{ "Move", function() UI.setTool("move") end, st.tool == "move", "F2 - Drag an arrow to slide along that axis (Settings > Gizmo adds plane squares / a centre dot)" },
 		{ "Rotate", function() UI.setTool("rotate") end, st.tool == "rotate", "F3 - Drag a colored ring" },
-		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "F4 - Drag a handle to stretch, center to resize evenly" },
+		{ "Scale", function() UI.setTool("scale") end, st.tool == "scale", "F4 - Drag a handle to stretch along that axis (Settings > Gizmo adds a centre dot to resize evenly)" },
 		{ "Measure", function() UI.setTool("measure") end, st.tool == "measure", "F9 - Click two points to see the distance between them" },
 		false,
 		{ st.space == "world" and "World" or "Local", UI.toggleSpace, false, "L - Gizmo aligned to the world or to the object" },
@@ -3339,6 +3450,8 @@ function UI.buildToolbar()
 		{ "Test", function() UI.enterTest() end, false, "Play the mod, then come back to editing" },
 		{ "Look", function() UI.selectTab("settings") end, false, "Colours, panel colour and interface size (Settings tab)" },
 		{ "Help", function() UI.toggleHelp() end, false, "H - Shortcuts and tips" },
+		false,
+		{ st.autosave and ("Auto " .. (st.autosaveMinutes or 5) .. "m") or "Auto off", UI.toggleAutosave, st.autosave, UI.autosaveTip },
 		false,
 		{ "Close", function() MS.close() end, false, "Close Mod Studio" }
 	}
@@ -3419,7 +3532,7 @@ local function contextHint()
 		if (t == "suni") then return "Drag to resize evenly" end
 	end
 	if (G.hoverVertex) then return "Drag this corner to reshape the triangle" end
-	if (G.hoverObj) then return "Click to select " .. MS.objName(G.hoverObj) .. ". Drag to hold it under the cursor" end
+	if (G.hoverObj) then return "Click to select " .. MS.objName(G.hoverObj) .. ". Move it with the gizmo" end
 	if (MS.settings.tool == "measure") then
 		return (MS.measure and MS.measure.a and not MS.measure.b) and "Click the second point" or "Click a point on an object or the floor to start measuring (Snap rounds to the grid)"
 	end
@@ -3483,14 +3596,14 @@ UI.HELP = {
 	{ "Right-drag", "Turn the camera (same as normal Toribash)" },
 	{ "F", "Point the camera at what's selected" },
 	{ "Selecting", true },
-	{ "Click", "Select an object (or body part on the Bodies tab)" },
+	{ "Click", "Select an object, body part or joint (opens its tab)" },
 	{ "Shift+click", "Add / remove from the selection" },
 	{ "Shift+drag", "Box-select on empty space" },
 	{ "Ctrl+A / Esc", "Select everything / deselect" },
 	{ "Editing", true },
 	{ "F1 F2 F3 F4 F9", "Select, Move, Rotate, Scale, Measure tools" },
-	{ "Drag object", "Holds it under the cursor at the same distance from the camera" },
-	{ "WASD (dragging)", "Move the camera - the held object comes along" },
+	{ "Drag a gizmo", "Moves, turns or sizes the selection (or type values in the panel)" },
+	{ "WASD (dragging)", "Move the camera - what you're dragging comes along" },
 	{ "Arrow keys", "Nudge by one grid step (PgUp/PgDn: up/down, Shift: finer)" },
 	{ "L / G", "World or local gizmo / snapping on or off" },
 	{ "Ctrl (dragging)", "Temporarily flip snapping" },

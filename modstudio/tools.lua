@@ -815,22 +815,36 @@ function MS.applyTemplate(id)
 	local t
 	for _, tt in ipairs(MS.TEMPLATES) do if (tt.id == id) then t = tt end end
 	if (not t) then return false end
-	local ok = MS.withUndo("Template: " .. t.name, function()
-		if (not MS.resetTo("all")) then error("couldn't reset the mod first") end
-		for k, v in pairs(t.rules) do MS.setRule(k, v) end
-		if (t.flags) then MS.setFlags(t.flags) end
-		local c = MS.dojoCenter()
-		MS.spawnOverride = { c[1], c[2], 0 }
-		t.build(c)
+	-- One undo step for the reset + the build. The reset finishes a few frames later (the game
+	-- loads classic first), so the template is built when it's done.
+	MS.pushUndo("Template: " .. t.name)
+	local was = MS.undoSuppress
+	MS.undoSuppress = true
+	local started = MS.resetTo("all", function(reset)
+		local ok, err = reset, "couldn't reset the mod first"
+		if (reset) then
+			ok, err = pcall(function()
+				for k, v in pairs(t.rules) do MS.setRule(k, v) end
+				if (t.flags) then MS.setFlags(t.flags) end
+				local c = MS.dojoCenter()
+				MS.spawnOverride = { c[1], c[2], 0 }
+				t.build(c)
+			end)
+		end
+		MS.undoSuppress = was
+		MS.spawnOverride = nil
+		MS.selClear()
+		MS.markDirty()
+		if (ok) then
+			MS.saveName = t.name
+			MS.toast("Started a new \"" .. t.name .. "\" mod - Restart match (Rules tab) to see the new rules, Ctrl+Z to undo")
+		else
+			echo("Mod Studio error: " .. tostring(err))
+		end
+		if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 	end)
-	MS.spawnOverride = nil
-	MS.selClear()
-	MS.markDirty()
-	MS.saveName = t.name
-	if (ok) then
-		MS.toast("Started a new \"" .. t.name .. "\" mod - Restart match (Rules tab) to see the new rules, Ctrl+Z to undo")
-	end
-	return ok
+	if (not started) then MS.undoSuppress = was end
+	return started
 end
 
 ---------------------------------------------------------------------------

@@ -23,7 +23,6 @@ local HOVER_OUTLINE = { 1, 1, 1 }
 -- Colours you can pick for the selection / hover highlights (Settings > 3D view)
 MS.VIEW_COLORS = {
 	{ "cyan", "Cyan", { 0.35, 0.9, 1 } },
-	{ "gold", "Gold", { 1, 0.85, 0.3 } },
 	{ "yellow", "Yellow", { 1, 0.85, 0.2 } },
 	{ "white", "White", { 1, 1, 1 } },
 	{ "pink", "Pink", { 1, 0.5, 0.8 } },
@@ -322,6 +321,10 @@ function MS.gizmoContext()
 		if (o) then
 			local w = MS.bodyWorld(MS.bodySel.p, MS.bodySel.b)
 			local W = MS.playerFrame(MS.bodySel.p)
+			local pv = G.drag and G.drag.preview
+			if (pv and pv.kind == "body" and pv.p == MS.bodySel.p and pv.b == MS.bodySel.b) then
+				w = { pos = pv.pos, R = pv.R }
+			end
 			return { kind = "body", p = MS.bodySel.p, b = MS.bodySel.b,
 				pivot = w and w.pos or { o.pos_x, o.pos_y, o.pos_z },
 				A = localSpace and (w and w.R or shapeMatrix(o)) or M.identity(), W = W, rot = true, scale = true }
@@ -330,6 +333,10 @@ function MS.gizmoContext()
 		local o = MS.joints[MS.jointSel.p] and MS.joints[MS.jointSel.p][MS.jointSel.j]
 		if (o) then
 			local w = MS.jointWorld(MS.jointSel.p, MS.jointSel.j)
+			local pv = G.drag and G.drag.preview
+			if (w and pv and pv.kind == "joint" and pv.p == MS.jointSel.p and pv.j == MS.jointSel.j) then
+				w = { pos = pv.pos, radius = w.radius }
+			end
 			return { kind = "joint", p = MS.jointSel.p, j = MS.jointSel.j,
 				pivot = w and w.pos or { o.pos_x, o.pos_y, o.pos_z },
 				A = M.identity(), W = MS.playerFrame(MS.jointSel.p), rot = false, scale = false }
@@ -382,11 +389,14 @@ local function captureItems(ctx)
 		items.player = it
 	elseif (ctx.kind == "body") then
 		local o = MS.bodies[ctx.p][ctx.b]
+		local w = MS.bodyWorld(ctx.p, ctx.b)
 		items.body = { p = ctx.p, b = ctx.b, pos = { o.pos_x, o.pos_y, o.pos_z }, R = shapeMatrix(o),
-			type = o.type, dims = { o.sides_x or 0, o.sides_y or 0, o.sides_z or 0 } }
+			type = o.type, dims = { o.sides_x or 0, o.sides_y or 0, o.sides_z or 0 },
+			world = w and w.pos, worldR = w and w.R, worldSides = w and w.sides, shape = w and w.shape }
 	elseif (ctx.kind == "joint") then
 		local o = MS.joints[ctx.p][ctx.j]
-		items.joint = { p = ctx.p, j = ctx.j, pos = { o.pos_x, o.pos_y, o.pos_z } }
+		local w = MS.jointWorld(ctx.p, ctx.j)
+		items.joint = { p = ctx.p, j = ctx.j, pos = { o.pos_x, o.pos_y, o.pos_z }, world = w and w.pos }
 	elseif (ctx.kind == "vertex") then
 		items.vertex = { tri = ctx.tri, key = ctx.key, pos = V.copy(MS.tris[ctx.tri][ctx.key]) }
 	else
@@ -461,7 +471,7 @@ local function applyOp(drag, op)
 
 	-- Body/joint gizmos work in world space; convert into the player's mod coordinates
 	local W = drag.ctx and drag.ctx.W
-	local worldMove = op.move
+	local worldMove, worldRot = op.move, op.rot
 	if ((items.body or items.joint) and W) then
 		local Wt = M.transpose(W)
 		local o2 = {}
@@ -490,34 +500,50 @@ local function applyOp(drag, op)
 		end
 		return
 	end
+	-- Body part / joint: only an outline follows the drag (drag.preview); the game's fighter is
+	-- rebuilt once on release. Moving the real part mid-drag let its joints yank the others about.
+	drag.livePreview = ((items.body and items.body.world) or (items.joint and items.joint.world)) and true or false
+	if (items.body and items.body.world) then
+		local it = items.body
+		drag.preview = { kind = "body", p = it.p, b = it.b, shape = it.shape,
+			pos = worldMove and V.add(it.world, worldMove) or it.world,
+			R = worldRot and M.mul(worldRot, it.worldR) or it.worldR, sides = it.worldSides }
+	elseif (items.joint and items.joint.world) then
+		drag.preview = { kind = "joint", p = items.joint.p, j = items.joint.j,
+			pos = worldMove and V.add(items.joint.world, worldMove) or items.joint.world }
+	end
+	-- Body parts / joints: nothing goes to the game until the drag ends (MS.endDrag writes
+	-- drag.pending). The game moves a live part as soon as its mod value changes, and its joints
+	-- then pulled the rest of the fighter around while the drag went on.
 	if (items.body) then
 		local it = items.body
-		local p, b = it.p, it.b
 		local np = op.move and V.add(it.pos, op.move) or it.pos
-		MS.bodySet(p, b, "pos_x", np[1])
-		MS.bodySet(p, b, "pos_y", np[2])
-		MS.bodySet(p, b, "pos_z", np[3])
+		-- The game turns a fighter (Uke by 180) around its head, so the head itself isn't turned:
+		-- a world move of the head is the same move in the mod. The rest of the fighter swings
+		-- round the new head, so on release it gets the opposite shift (pending.comp).
+		local comp
+		if (it.b == 0 and worldMove and W) then
+			np = V.add(it.pos, worldMove)
+			local back = M.apply(M.transpose(W), worldMove)
+			comp = V.sub(worldMove, back)
+			if (V.len(comp) < 1e-6) then comp = nil end
+		end
 		local R = it.R
 		if (op.rot) then R = M.mul(op.rot, it.R) end
 		local x, y, z = M.toEuler(R)
-		MS.bodySet(p, b, "rot_x", x)
-		MS.bodySet(p, b, "rot_y", y)
-		MS.bodySet(p, b, "rot_z", z)
 		local d = it.dims
 		if (op.scale) then d = scaleDims(it.type, it.dims, localFactors(it.R, op.scaleAxis, op.scale), snap) end
-		MS.bodySet(p, b, "sides_x", d[1])
-		MS.bodySet(p, b, "sides_y", d[2])
-		MS.bodySet(p, b, "sides_z", d[3])
-		if (MS.settings.symmetry) then MS.mirrorBody(p, b, true) end
+		if (drag.preview and drag.preview.kind == "body" and op.scale) then drag.preview.sides = d end
+		local fields = { pos_x = np[1], pos_y = np[2], pos_z = np[3], sides_x = d[1], sides_y = d[2], sides_z = d[3] }
+		-- Only a real turn rewrites the angles (a move keeps them exactly as they were)
+		if (op.rot) then fields.rot_x, fields.rot_y, fields.rot_z = x, y, z end
+		drag.pending = { kind = "body", p = it.p, i = it.b, fields = fields, comp = comp }
 		return
 	end
 	if (items.joint) then
 		local it = items.joint
 		local np = op.move and V.add(it.pos, op.move) or it.pos
-		MS.jointSet(it.p, it.j, "pos_x", np[1])
-		MS.jointSet(it.p, it.j, "pos_y", np[2])
-		MS.jointSet(it.p, it.j, "pos_z", np[3])
-		if (MS.settings.symmetry) then MS.mirrorJoint(it.p, it.j, true) end
+		drag.pending = { kind = "joint", p = it.p, i = it.j, fields = { pos_x = np[1], pos_y = np[2], pos_z = np[3] } }
 		return
 	end
 	if (items.vertex) then
@@ -882,6 +908,34 @@ function MS.endDrag()
 	G.drag = nil
 	pcall(enable_mouse_camera_movement)
 	if (drag.started) then
+		local pd = drag.pending
+		if (pd) then
+			-- Write the body part / joint once, now that it's let go, then rebuild the fighter
+			local set = pd.kind == "body" and MS.bodySet or MS.jointSet
+			for f, v in pairs(pd.fields) do set(pd.p, pd.i, f, v) end
+			if (pd.comp) then
+				-- Moved a turned fighter's head: shift everything else so it stays where it was
+				local c = pd.comp
+				for b, o in pairs(MS.bodies[pd.p] or {}) do
+					if (b ~= 0 and o.pos_x) then
+						MS.bodySet(pd.p, b, "pos_x", o.pos_x + c[1])
+						MS.bodySet(pd.p, b, "pos_y", o.pos_y + c[2])
+						MS.bodySet(pd.p, b, "pos_z", o.pos_z + c[3])
+					end
+				end
+				for j, o in pairs(MS.joints[pd.p] or {}) do
+					if (o.pos_x) then
+						MS.jointSet(pd.p, j, "pos_x", o.pos_x + c[1])
+						MS.jointSet(pd.p, j, "pos_y", o.pos_y + c[2])
+						MS.jointSet(pd.p, j, "pos_z", o.pos_z + c[3])
+					end
+				end
+			end
+			if (MS.settings.symmetry) then
+				if (pd.kind == "body") then MS.mirrorBody(pd.p, pd.i, true) else MS.mirrorJoint(pd.p, pd.i, true) end
+			end
+			MS.flush(true)
+		end
 		if (drag.ctx and drag.ctx.kind == "player" and drag.pTotal and V.len(drag.pTotal) > 1e-4) then
 			-- Whole player: the preview becomes this player's engageplayerpos entry
 			MS.movePlayerBy(drag.ctx.p, drag.pTotal, { label = "Move player", previewed = true })
@@ -1043,7 +1097,11 @@ function MS.buildFrame()
 	-- Uses where the game actually draws the player, not the raw mod values
 	local function bodyOutline(p, b, color, alpha)
 		local w = MS.bodyWorld(p, b)
-		if (not w) then return end
+		local pv = G.drag and G.drag.preview
+		if (pv and pv.kind == "body" and pv.p == p and pv.b == b and pv.pos) then
+			w = { pos = pv.pos, R = pv.R or (w and w.R), sides = pv.sides or (w and w.sides), shape = pv.shape or (w and w.shape) }
+		end
+		if (not w or not w.R or not w.sides) then return end
 		local ol = outline(w.shape, w.pos, w.R, w.sides, right)
 		if (ol) then
 			ol.color, ol.alpha = color, alpha
@@ -1059,6 +1117,8 @@ function MS.buildFrame()
 	if (tabOpen("joints") and MS.jointSel) then
 		local o = MS.joints[MS.jointSel.p] and MS.joints[MS.jointSel.p][MS.jointSel.j]
 		local w = MS.jointWorld(MS.jointSel.p, MS.jointSel.j)
+		local pv = G.drag and G.drag.preview
+		if (w and pv and pv.kind == "joint" and pv.p == MS.jointSel.p and pv.j == MS.jointSel.j) then w = { pos = pv.pos, radius = w.radius } end
 		if (o and w) then
 			local W = MS.playerFrame(MS.jointSel.p)
 			local pos = w.pos
@@ -1177,7 +1237,10 @@ function MS.buildFrame()
 			local ppu = sqrt((r[1] - c[1]) ^ 2 + (r[2] - c[2]) ^ 2)
 			if (ppu > 0.01) then
 				local L = MS.settings.gizmoSize / ppu
-				local g = { tool = tool, center = c, L = L, axes = {}, planes = {}, rings = {} }
+				-- By default the gizmo only slides along its arrows. The centre dot (free move /
+				-- even resize) and the plane squares are options (Settings > Gizmo).
+				local noCenter = not MS.settings.gizmoCenter
+				local g = { tool = tool, center = c, L = L, axes = {}, planes = {}, rings = {}, noCenter = noCenter }
 				for k = 1, 3 do
 					local dir = M.col(ctx.A, k)
 					local tip = P(V.add(pivot, V.mul(dir, L)))
@@ -1193,7 +1256,7 @@ function MS.buildFrame()
 							base = { c[1] + fd[1] * 12, c[2] + fd[2] * 12, ok = true }, ok = true, fake = fd }
 					end
 				end
-				if (tool == "move") then
+				if (tool == "move" and MS.settings.gizmoPlanes) then
 					for k = 1, 3 do
 						local i, j = k % 3 + 1, (k + 1) % 3 + 1
 						local di, dj = M.col(ctx.A, i), M.col(ctx.A, j)
@@ -1255,13 +1318,13 @@ function MS.gizmoHit(x, y)
 	local c = g.center
 	local dc = sqrt((x - c[1]) ^ 2 + (y - c[2]) ^ 2)
 	if (g.tool == "move") then
-		if (dc < 11) then return { type = "free" } end
+		if (dc < 11 and not g.noCenter) then return { type = "free" } end
 		for k = 1, 3 do
 			local pl = g.planes[k]
 			if (pl and pl.ok and inQuad(x, y, pl.q)) then return { type = "plane", k = k } end
 		end
 	elseif (g.tool == "scale") then
-		if (dc < 12) then return { type = "suni" } end
+		if (dc < 12 and not g.noCenter) then return { type = "suni" } end
 	end
 	local best, bestD = nil, 9
 	if (g.tool == "move" or g.tool == "scale") then
@@ -1690,11 +1753,17 @@ function MS.draw2d()
 					end
 				end
 			end
-			local centerHover = sameHandle(hov, g.tool == "move" and "free" or "suni")
-			set_color(0, 0, 0, 0.55)
-			disk(c[1], c[2], 9)
-			if (centerHover) then set_color(HOVER_COLOR[1], HOVER_COLOR[2], HOVER_COLOR[3], 1) else set_color(1, 1, 1, 1) end
-			disk(c[1], c[2], 7)
+			if (g.noCenter) then
+				-- Just a small marker: there's no centre handle to grab
+				set_color(1, 1, 1, 0.9)
+				disk(c[1], c[2], 3)
+			else
+				local centerHover = sameHandle(hov, g.tool == "move" and "free" or "suni")
+				set_color(0, 0, 0, 0.55)
+				disk(c[1], c[2], 9)
+				if (centerHover) then set_color(HOVER_COLOR[1], HOVER_COLOR[2], HOVER_COLOR[3], 1) else set_color(1, 1, 1, 1) end
+				disk(c[1], c[2], 7)
+			end
 		elseif (g.tool == "rotate") then
 			for k = 1, 3 do
 				local ring = g.rings[k]
@@ -2264,26 +2333,26 @@ function MS.onMouseDown(btn, x, y)
 
 	-- 3) Body parts / joints (own ray picking against the drawn bodies),
 	--    unless an object is closer to the camera
+	--    Whatever is nearest wins, and its tab opens: a body part -> Bodies, a joint -> Joints.
+	--    Picking a parent or a link end only takes objects.
 	local idx, objDist = pickObj(x, y)
 	objDist = objDist or math.huge
-	if (tabOpen("players")) then
-		local p, b, t = MS.pickBody(x, y)
-		if (p ~= nil and t < objDist) then
-			MS.UI.selectBody(p, b)
-			if (placingPlayers()) then
-				-- Place mode: click-drag the whole player, held under the cursor like an object
-				local ctx = MS.gizmoContext()
-				if (ctx and ctx.kind == "player") then
-					MS.beginDrag({ type = "direct" }, x, y, ctx)
-				end
-			end
+	local picking = MS.UI.parentPick or (tabOpen("links") and MS.UI.linkPick)
+	if (not picking) then
+		local bp, bb, bt = MS.pickBody(x, y)
+		local jp, jj, jt = MS.pickJoint(x, y)
+		bt = (bp ~= nil and bt) or math.huge
+		jt = (jp ~= nil and jt) or math.huge
+		-- Joints sit in the ends of the body parts: the open tab wins a near tie
+		if (tabOpen("players")) then jt = jt + 0.05 elseif (tabOpen("joints")) then bt = bt + 0.05 end
+		if (bt < objDist and bt <= jt) then
+			if (not tabOpen("players")) then MS.UI.selectTab("players") end
+			-- Clicking only selects: the whole player moves with its gizmo in Place mode
+			MS.UI.selectBody(bp, bb)
 			return 1
-		end
-	end
-	if (tabOpen("joints")) then
-		local p, j, t = MS.pickJoint(x, y)
-		if (p ~= nil and t < objDist) then
-			MS.UI.selectJoint(p, j)
+		elseif (jt < objDist) then
+			if (not tabOpen("joints")) then MS.UI.selectTab("joints") end
+			MS.UI.selectJoint(jp, jj)
 			return 1
 		end
 	end
@@ -2314,13 +2383,7 @@ function MS.onMouseDown(btn, x, y)
 			MS.primary = idx
 			MS.UI.requestRefresh()
 		end
-		if (MS.settings.tool ~= "rotate" and MS.settings.tool ~= "scale") then
-			-- Click and drag an object to hold it under the cursor at its current distance from the camera
-			local ctx = MS.gizmoContext()
-			if (ctx and ctx.kind == "env") then
-				MS.beginDrag({ type = "direct" }, x, y, ctx)
-			end
-		end
+		-- Clicking only selects: objects move with the gizmo or by typing values
 		return 1
 	end
 

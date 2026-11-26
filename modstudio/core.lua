@@ -5,7 +5,7 @@
 MS = MS or {}
 local MS = MS
 
-MS.VERSION = "1.1.2"
+MS.VERSION = "1.1.3"
 MS.HOOK = "modstudio"
 
 local clock = os.clock_real or os.clock
@@ -136,12 +136,15 @@ MS.DEFAULT_SETTINGS = {
 	showGrid = true,
 	gridExtent = 50,
 	gridFix = 0,            -- settings migrations done for the grid
+	autosaveFix = 0,        -- settings migration: old 1 min default -> 5 min
 	showLabels = false,
 	showLinks = true,
 	gizmoSize = 95,
+	gizmoCenter = false,    -- move / scale gizmo: centre dot (free move, even resize)
+	gizmoPlanes = false,    -- move gizmo: plane squares (move on two axes)
 	newStatic = true,
 	autosave = true,
-	autosaveMinutes = 1,    -- how often autosave runs (when something changed)
+	autosaveMinutes = 5,    -- how often autosave runs (when something changed)
 	rotConvention = 1,      -- 1: Rz*Ry*Rx (Toribash default), 2: transposed
 	rotUnit = "deg",        -- units of rot_* in the engine API ("deg" / "rad"), measured by MS.calibrate
 	sizeScale = 1,          -- engine dims per unit of full size, measured by MS.calibrate
@@ -163,15 +166,15 @@ MS.DEFAULT_SETTINGS = {
 	layout = {},            -- moved / resized panels: side -> { x, y, w, h }
 	dockSizes = {},         -- dragged panel sizes: left / right width, bottom height
 	dockState = nil,        -- which tabs are open: side -> { active, open }
-	uiScale = 1,            -- 0.85 / 1 / 1.15 / 1.3
-	accent = "pink",        -- highlight color (see UI.ACCENTS)
+	uiScale = 1.15,         -- 0.85 / 1 / 1.15 / 1.3
+	accent = "white",       -- highlight color (see UI.ACCENTS)
 	accentCustom = { 0.9, 0.62, 0.62 },
-	theme = "toribash",     -- main panel colour (see UI.THEMES)
+	theme = "charcoal",     -- main panel colour (see UI.THEMES)
 	themeCustom = { 0.4, 0.4, 0.45 },
 	squareCorners = false,
-	panelOpacity = 1,       -- 0.3 .. 1, panel bodies only
+	panelOpacity = 0.5,     -- 0.3 .. 1, panel bodies only
 	selColor = "cyan",      -- 3D view highlight colours (see MS.VIEW_COLORS)
-	primaryColor = "gold",
+	primaryColor = "yellow",
 	hoverColor = "yellow",
 	hoverOutline = "white",
 	outlineWidth = 1.5,
@@ -189,7 +192,8 @@ function MS.loadSettings()
 	local saved = MS.readData(MS.SETTINGS_FILE)
 	if (saved) then
 		for k, v in pairs(saved) do
-			if (MS.settings[k] ~= nil or k == "panelX" or k == "panelY") then
+			-- Keys whose default is nil (so not in the table above) are listed here, or they'd be dropped
+			if (MS.settings[k] ~= nil or k == "panelX" or k == "panelY" or k == "dockState") then
 				MS.settings[k] = v
 			end
 		end
@@ -203,6 +207,15 @@ function MS.loadSettings()
 	if ((tonumber(MS.settings.camFix) or 0) < 4) then
 		MS.settings.scrollPush = true
 		MS.settings.camFix = 4
+	end
+	-- Gold was dropped from the 3D view colours (it looked the same as Yellow)
+	for _, k in ipairs({ "selColor", "primaryColor", "hoverColor", "hoverOutline" }) do
+		if (MS.settings[k] == "gold") then MS.settings[k] = "yellow" end
+	end
+	-- Autosave used to default to every minute: move anyone still on that default to 5
+	if ((tonumber(MS.settings.autosaveFix) or 0) < 1) then
+		if ((tonumber(MS.settings.autosaveMinutes) or 1) == 1) then MS.settings.autosaveMinutes = 5 end
+		MS.settings.autosaveFix = 1
 	end
 	-- The grid used to default to 16: move anyone still on the old default to the bigger grid
 	if ((tonumber(MS.settings.gridFix) or 0) < 1) then
@@ -664,6 +677,8 @@ end
 ---changes (scrubbing, typing, dragging) are batched unless `force` is set.
 function MS.flush(force)
 	if (not MS.needRefresh) then return end
+	-- A body part / joint being moved is shown live; rebuild when it's let go
+	if (not force and MS.G and MS.G.drag and MS.G.drag.livePreview) then return end
 	local now = clock()
 	if (not force) then
 		-- Only moves / resizes / recolors so far: show them on the live objects now
@@ -3160,8 +3175,142 @@ local RESET_LABELS = {
 	all = "Reset everything", players = "Reset both players", rules = "Reset rules", [0] = "Reset Tori", [1] = "Reset Uke"
 }
 
----what: "all" | "players" | "rules" | player index
-function MS.resetTo(what)
+---Starts the mod maker over from a freshly loaded classic mod: no objects, classic fighters
+---(extra limbs gone), every rule back to the game's default. import_mod_into_maker alone only
+---overwrites what the file lists, so rules, fighters and limbs classic.tbm leaves out survived it.
+---Things to run a few frames from now (Mod Studio's tick runs them)
+MS.frameJobs = MS.frameJobs or {}
+function MS.afterFrames(n, fn)
+	table.insert(MS.frameJobs, { n = n, fn = fn })
+end
+function MS.runFrameJobs()
+	for i = #MS.frameJobs, 1, -1 do
+		local job = MS.frameJobs[i]
+		job.n = job.n - 1
+		if (job.n <= 0) then
+			table.remove(MS.frameJobs, i)
+			local ok, err = pcall(job.fn)
+			if (not ok) then echo("Mod Studio: " .. tostring(err)) end
+		end
+	end
+end
+
+---Starts the mod maker over from a freshly loaded classic mod (the game's default rules, no
+---objects, no extra limbs), then calls onDone(ok). The game queues "lm" and runs it a frame
+---or so later, so this waits for it: entering straight away let the late load overwrite
+---everything written afterwards.
+function MS.freshModMaker(onDone)
+	if (type(runCmd) ~= "function" or type(enter_mod_maker_mode) ~= "function") then
+		onDone(false)
+		return
+	end
+	MS.resetting = true
+	pcall(exit_mod_maker_mode)
+	pcall(runCmd, "lm " .. MS.DEFAULT_MOD, false)
+	MS.afterFrames(8, function()
+		pcall(enter_mod_maker_mode)
+		local ok, active = pcall(is_mod_maker_mode_active)
+		if (not (ok and active)) then
+			pcall(enter_mod_maker_mode)
+			ok, active = pcall(is_mod_maker_mode_active)
+		end
+		if (MS.closeBuiltinModMaker) then pcall(MS.closeBuiltinModMaker) end
+		MS.resetting = false
+		onDone(ok and active)
+	end)
+end
+
+---The classic fighter, captured from an untouched game (raw engine values, modstudio/classic_fighter.lua).
+---Loading any mod copies the game's built-in fighter, and edits can end up in that built-in copy,
+---so a reset writes these values instead of trusting the load.
+function MS.classicFighter()
+	if (MS.CLASSIC_FIGHTER == nil) then
+		local ok, t = pcall(dofile, "modstudio/classic_fighter.lua")
+		MS.CLASSIC_FIGHTER = (ok and type(t) == "table") and t or false
+	end
+	return MS.CLASSIC_FIGHTER or nil
+end
+
+---Writes the classic fighter into player `which` ("all" / "players": every player). Returns true if it did.
+function MS.writeClassicFighters(which)
+	local t = MS.classicFighter()
+	if (not t) then return false end
+	local okr, rule = pcall(get_gamerule, "numplayers")
+	local n = MS.clamp(okr and tonumber(rule) or 2, 2, 4)
+	for p = 0, n - 1 do
+		if (which == "all" or which == "players" or which == p) then
+			local d = t[p] or t[p % 2] or t[0]
+			for b, fields in pairs(d.bodies or {}) do
+				-- Shape first: it decides how the sizes are read
+				if (fields.type ~= nil) then pcall(set_mod_body, p, b, "type", fields.type) end
+				for f, v in pairs(fields) do
+					if (f ~= "type") then pcall(set_mod_body, p, b, f, v) end
+				end
+			end
+			for j, fields in pairs(d.joints or {}) do
+				for f, v in pairs(fields) do pcall(set_mod_joint, p, j, f, v) end
+			end
+		end
+	end
+	pcall(refresh_mod_maker_world)
+	return true
+end
+
+---True if player p's fighter (classic parts) has the classic values
+local function isClassic(p)
+	local t = MS.classicFighter()
+	local d = t and (t[p] or t[p % 2] or t[0])
+	if (not d) then return true end
+	for b, fields in pairs(d.bodies or {}) do
+		for _, f in ipairs({ "pos_x", "pos_y", "pos_z", "sides_x", "sides_y", "sides_z", "density" }) do
+			local ok, v = pcall(get_mod_body, p, b, f)
+			if (ok and type(v) == "number" and fields[f] and math.abs(v - fields[f]) > 1e-4) then return false end
+		end
+	end
+	for j, fields in pairs(d.joints or {}) do
+		for _, f in ipairs({ "pos_x", "pos_y", "pos_z", "maxforce", "radius" }) do
+			local ok, v = pcall(get_mod_joint, p, j, f)
+			if (ok and type(v) == "number" and fields[f] and math.abs(v - fields[f]) > 1e-4) then return false end
+		end
+	end
+	return true
+end
+
+---The game's classic load can land again a moment after the reset (the new match copies its
+---built-in fighter, which edits may have overwritten). For a few seconds, put classic back if so.
+function MS.guardClassicFighters(which)
+	local checks = 0
+	-- Anything you do after the reset (an edit, undo / redo) ends the watch
+	local function mark() return #MS.undoStack .. ":" .. #MS.redoStack .. ":" .. tostring(MS.lastEditClock) end
+	local start
+	local function check()
+		start = start or mark()
+		if (mark() ~= start or MS.resetting) then return end
+		checks = checks + 1
+		local okr, rule = pcall(get_gamerule, "numplayers")
+		local n = MS.clamp(okr and tonumber(rule) or 2, 2, 4)
+		local fixed = false
+		for p = 0, n - 1 do
+			if ((which == "all" or which == "players" or which == p) and not isClassic(p)) then
+				MS.writeClassicFighters(p)
+				fixed = true
+			end
+		end
+		if (fixed) then
+			MS.guardFixes = (MS.guardFixes or 0) + 1
+			MS.reloadAll()
+			start = mark()
+			if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+		end
+		if (checks < 30) then MS.afterFrames(6, check) end
+	end
+	MS.afterFrames(2, check)
+end
+
+---what: "all" | "players" | "rules" | player index. Finishes a few frames later (the game
+---loads classic first); onDone(ok) runs then.
+function MS.resetTo(what, onDone)
+	if (MS.resetting) then return false end
 	local label = RESET_LABELS[what] or "Reset"
 	local keep = MS.snapshot()
 	-- Whole-player placement lives in rules (engageplayerpos / engageplayerrot): note where
@@ -3176,17 +3325,30 @@ function MS.resetTo(what)
 	local pushed = not MS.undoSuppress
 	MS.pushUndo(label)
 	MS.endDragSilently()
+	MS.selClear()
+	MS.toast(label .. "...")
+	MS.freshModMaker(function(fresh)
 	local ok, res = pcall(import_mod_into_maker, MS.DEFAULT_MOD)
-	if (not ok or not res) then
+	if (not fresh or not ok or not res) then
 		-- The import may have half-run: re-read the engine, then put everything back
 		if (pushed) then table.remove(MS.undoStack) end
 		MS.reloadAll()
 		MS.restore(keep)
 		MS.toast("Couldn't load the default mod (" .. MS.DEFAULT_MOD .. ") - nothing was changed")
-		return false
+		if (onDone) then onDone(false) end
+		return
+	end
+	if (what ~= "rules") then
+		MS.writeClassicFighters(what)
+		MS.guardClassicFighters(what)
 	end
 	MS.meta, MS.tris = {}, {}
 	MS.reloadAll()
+	if (what == "all") then
+		-- A blank classic mod: new exports start as "Untitled" again
+		MS.saveName = "Untitled"
+		MS.faceFlipped = {}
+	end
 	if (what ~= "all") then
 		-- Put back everything that isn't being reset
 		local s = MS.deepcopy(keep)
@@ -3224,6 +3386,9 @@ function MS.resetTo(what)
 		MS.clearPlacement(false)
 	end
 	if (toastMsg) then MS.toast(toastMsg) end
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+	if (onDone) then onDone(true) end
+	end)
 	return true
 end
 
