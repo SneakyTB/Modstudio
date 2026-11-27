@@ -805,6 +805,9 @@ function MS.ejSet(idx, f, v)
 	if (not o or MS.unsupported.ej[f]) then
 		return
 	end
+	-- Changing a link's engine joint type crashes the game, so it's never written:
+	-- links keep the type the game made them with (hinge).
+	if (f == "type") then return end
 	v = normalize(f, v)
 	o[f] = v
 	pcall(set_mod_envjoint, idx, f, v)
@@ -1205,9 +1208,9 @@ function MS.restore(s, forceRecreate)
 	local posBefore, rotBefore = MS.getRule("engageplayerpos"), MS.getRule("engageplayerrot")
 	MS.applyRules(s.rules)
 	for _, rn in ipairs({ "engageplayerpos", "engageplayerrot" }) do
-
+		-- Always go through setRule so Mod Studio keeps its own copy (see MS.STICKY_RULES).
 		local want = s.rules and s.rules[rn]
-		if (want ~= nil and tostring(want) ~= tostring(MS.getRule(rn))) then MS.setRule(rn, want) end
+		if (want ~= nil) then MS.setRule(rn, want) end
 	end
 	if (MS.hierFix) then MS.hierFix() end
 
@@ -2440,11 +2443,17 @@ end
 
 MS.ruleShadow = MS.ruleShadow or {}
 
+-- The game can stop reporting the custom start pos/rot (get_gamerule gives "")
+-- after a match restart while still using it, so a project saved then lost it.
+-- Mod Studio keeps its own copy of these two and trusts it when the game reads blank.
+MS.STICKY_RULES = { engageplayerpos = true, engageplayerrot = true }
+
 function MS.getRule(name)
 	local ok, v = pcall(get_gamerule, name)
 	local sh = MS.ruleShadow[name]
 	if (sh) then
 		if (ok and tostring(v) == sh.eng) then return sh.v end
+		if (sh.sticky and (not ok or v == nil or tostring(v) == "")) then return sh.v end
 		MS.ruleShadow[name] = nil
 	end
 	if (ok) then return v end
@@ -2454,7 +2463,9 @@ end
 function MS.setRule(name, value)
 	pcall(set_gamerule, name, tostring(value))
 	local ok, back = pcall(get_gamerule, name)
-	if (ok and tostring(back) ~= tostring(value)) then
+	if (MS.STICKY_RULES[name]) then
+		MS.ruleShadow[name] = { v = tostring(value), eng = ok and tostring(back) or "", sticky = true }
+	elseif (ok and tostring(back) ~= tostring(value)) then
 		MS.ruleShadow[name] = { v = tostring(value), eng = tostring(back) }
 	else
 		MS.ruleShadow[name] = nil
@@ -2828,6 +2839,8 @@ function MS.importMod(name)
 	MS.pushUndo("Import " .. name)
 	local ok, res = pcall(import_mod_into_maker, name)
 	if (ok and res) then
+		-- The imported mod's rules replace ours, so drop remembered rule values.
+		MS.ruleShadow = {}
 		MS.meta, MS.tris = {}, {}
 		MS.reloadAll()
 

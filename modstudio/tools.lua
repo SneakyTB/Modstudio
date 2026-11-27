@@ -1121,20 +1121,399 @@ local function contactPoint(a, b)
 	return V.lerp(pa, pb, 0.5)
 end
 
+-- "a:b" -> link index, both ways round.
 local function linkedPairs()
 	local set = {}
-	for _, ej in pairs(MS.ejs) do
+	for j, ej in pairs(MS.ejs) do
 		if (ej.obj1 and ej.obj2) then
-			set[ej.obj1 .. ":" .. ej.obj2] = true
-			set[ej.obj2 .. ":" .. ej.obj1] = true
+			set[ej.obj1 .. ":" .. ej.obj2] = j
+			set[ej.obj2 .. ":" .. ej.obj1] = j
 		end
 	end
 	return set
 end
 
+-- A weld is one hidden link with range 0..0 and no motor, the same as the
+-- game's own rigid multi-part swords. Links in Toribash are soft, though: they
+-- give way in proportion to the weight they hold. Tested in game with arms of
+-- three blocks sticking out of a post: mass 1, 0.1 and 0.01 all sagged; 0.001
+-- and 0.0001 stayed perfectly still. A second crossed hinge, a brake motor and
+-- link hardness didn't help (the motor made it worse or exploded). So welding
+-- also makes the welded pieces light, and unwelding gives them their weight back.
+--
+--
+-- In-game test (three light blocks curling up from a post, 20 degrees per
+-- joint): a 0..0 range with the axis along the bend kept the built curl.
+-- Ranges pinned to the built angle, or narrow ranges around it, did worse. So a
+-- weld is range 0..0 with its axis along the turn between the two pieces.
+MS.WELD = { range = 0.001, mass = 0.001 }
+
+-- The turn that takes piece a's orientation to piece b's, as a world axis (and
+-- the range to use, always 0: the game holds the built angle at 0).
+local function weldPose(a, b)
+	local R1, R2 = MS.objRot(a), MS.objRot(b)
+	local Rr = M.mul(M.transpose(R1), R2)
+	local c = math.max(-1, math.min(1, (Rr[1][1] + Rr[2][2] + Rr[3][3] - 1) / 2))
+	local ang = math.acos(c)
+	if (ang < 1e-4) then return { 1, 0, 0 }, 0 end
+	local u
+	if (math.pi - ang < 1e-3) then
+		-- Half turn: the axis is the column of (Rr + I) with the biggest size.
+		local best = 0
+		for k = 1, 3 do
+			local col = { Rr[1][k], Rr[2][k], Rr[3][k] }
+			col[k] = col[k] + 1
+			if (V.len(col) > best) then best, u = V.len(col), col end
+		end
+	else
+		u = { Rr[3][2] - Rr[2][3], Rr[1][3] - Rr[3][1], Rr[2][1] - Rr[1][2] }
+	end
+	u = V.norm(u)
+	return V.norm(M.apply(R1, u)), 0
+end
+
+local function weldOpts(stop)
+	return { hi = stop, lo = stop, force = 0, speed = 0, visible = false }
+end
+
+-- Pieces made light during the current weld action, for the message.
+local lightened = 0
+
+local function lighten(idx)
+	local o = MS.objs[idx]
+	if (not o) then return end
+	local m = tonumber(o.mass) or 1
+	if (m <= MS.WELD.mass * 1.01) then return end
+	MS.meta[idx] = MS.meta[idx] or {}
+	if (MS.meta[idx].preWeldMass == nil) then MS.meta[idx].preWeldMass = m end
+	MS.objSet(idx, "mass", MS.WELD.mass)
+	lightened = lightened + 1
+end
+
+local function lightMsg()
+	if (lightened == 0) then return "" end
+	return " Made " .. lightened .. " piece" .. (lightened == 1 and "" or "s") ..
+		" light (mass " .. MS.WELD.mass .. ") so the welds hold - Unweld gives the weight back."
+end
+
+-- Creates a weld. Returns the link index, or nil.
+local function weldLink(a, b, pos)
+	local axis, stop = weldPose(a, b)
+	local n = hinge(a, b, pos, axis, weldOpts(stop))
+	if (n) then lighten(a); lighten(b) end
+	return n
+end
+
+-- Is this hidden link part of one of Mod Studio's welds (any version)?
+-- A weld is a hidden link whose range is pinned to one angle (older versions
+-- used 0..0 or a tiny +-0.001 range).
+local function isWeld(ej)
+	if (not ej or ej.visible) then return false end
+	return math.abs((ej.histop or 0) - (ej.lostop or 0)) <= MS.WELD.range * 2.5
+end
+
+-- After links are removed: pieces with no weld left get their weight back.
+local function restoreWeights(objs)
+	local welded = {}
+	for _, ej in pairs(MS.ejs) do
+		if (isWeld(ej)) then
+			if (ej.obj1) then welded[ej.obj1] = true end
+			if (ej.obj2) then welded[ej.obj2] = true end
+		end
+	end
+	local n = 0
+	for idx in pairs(objs) do
+		local m = MS.meta[idx]
+		if (MS.objs[idx] and m and m.preWeldMass ~= nil and not welded[idx]) then
+			MS.objSet(idx, "mass", m.preWeldMass)
+			m.preWeldMass = nil
+			n = n + 1
+		end
+	end
+	return n
+end
+
+local function weldLinksBetween(a, b)
+	local out = {}
+	for j, ej in pairs(MS.ejs) do
+		if (((ej.obj1 == a and ej.obj2 == b) or (ej.obj1 == b and ej.obj2 == a)) and isWeld(ej)) then
+			out[#out + 1] = j
+		end
+	end
+	table.sort(out)
+	return out
+end
+
+-- Brings an existing weld between a and b (made by any earlier version) up to
+-- the current kind: one link held at the built angle, no motor, light pieces.
+local function stiffenPair(a, b)
+	local links = weldLinksBetween(a, b)
+	if (#links == 0) then return false end
+	local changed = false
+	for i, j in ipairs(links) do
+		local ej = MS.ejs[j]
+		if (i > 1) then
+			-- Earlier versions made two crossed hinges; one is enough.
+			pcall(delete_mod_envjoint, j)
+			MS.ejs[j] = nil
+			if (MS.ejSel == j) then MS.ejSel = nil end
+			changed = true
+		else
+			-- Point the axis along the pieces' built turn and pin the range there.
+			local axis, stop = weldPose(ej.obj1, ej.obj2)
+			local function off(x, y) return math.abs((x or 0) - y) > 1e-4 end
+			if (off(ej.histop, stop) or off(ej.lostop, stop) or off(ej.axis_x, axis[1]) or off(ej.axis_y, axis[2])
+				or off(ej.axis_z, axis[3]) or (ej.maxforce or 0) ~= 0 or (ej.maxvelocity or 0) ~= 0) then
+				MS.ejSet(j, "axis_x", axis[1]); MS.ejSet(j, "axis_y", axis[2]); MS.ejSet(j, "axis_z", axis[3])
+				MS.ejSet(j, "histop", stop)
+				MS.ejSet(j, "lostop", stop)
+				MS.ejSet(j, "maxforce", 0)
+				MS.ejSet(j, "maxvelocity", 0)
+				changed = true
+			end
+		end
+	end
+	local before = lightened
+	lighten(a); lighten(b)
+	return changed or lightened > before
+end
+
 local function isTriSlice(idx)
 	local m = MS.meta[idx]
 	return m and m.tri and MS.tris[m.tri] and true or false
+end
+
+-- ---------------------------------------------------------------------------
+-- Trimming welded pieces so they don't overlap. Pieces that overlap push
+-- against each other in game even when welded, so the build shakes and bends.
+-- Before welding, one piece of each overlapping pair is made shorter from the
+-- overlapping end only (its far end stays put), by the smallest cut that leaves
+-- a hair-thin gap. Moving pieces instead broke curved builds like arches.
+-- ---------------------------------------------------------------------------
+MS.WELD_GAP = 0.001
+MS.WELD_MIN_KEEP = 0.2 -- never cut a piece below 20% of its size
+
+-- How far b sinks into a (> 0 = overlapping) and the direction from a to b.
+local function penetration(a, b)
+	if (a.sphere and b.sphere) then
+		local d = V.sub(b.c, a.c)
+		local len = V.len(d)
+		local axis = len > 1e-9 and V.mul(d, 1 / len) or { 0, 0, 1 }
+		return a.h[1] + b.h[1] - len, axis
+	end
+	if (a.sphere ~= b.sphere) then
+		local box, ball, flip = a, b, 1
+		if (a.sphere) then box, ball, flip = b, a, -1 end
+		local q = closestOnBox(box, ball.c)
+		local n = V.sub(ball.c, q)
+		local len = V.len(n)
+		if (len > 1e-6) then
+
+			return ball.h[1] - len, V.mul(n, flip / len)
+		end
+	end
+	return boxOverlap(a, b)
+end
+
+local function nodeVolume(key)
+	local v = 0
+	for _, idx in ipairs(MS.nodeObjs(key)) do v = v + weldBox(idx).vol end
+	return v
+end
+
+-- The smallest trim of object idx that clears `other`. Returns the cut size and
+-- a function that applies it, or nil when no trim within the limit works.
+local DIM_FIELDS = { "dims_x", "dims_y", "dims_z" }
+local function trimPlan(idx, other)
+	local o = MS.objs[idx]
+	if (not o) then return nil end
+	local b = weldBox(idx)
+	local need, keep = MS.WELD_GAP, MS.WELD_MIN_KEEP
+	if (o.type == 0) then
+		-- Sphere: only the radius can change.
+		local r = o.dims_x or 0
+		local s = penetration(b, other) + need
+		if (s <= 0 or r - s < r * keep) then return nil end
+		return s, function() MS.objSet(idx, "dims_x", r - s) end
+	end
+	local ax = boxAxes(b)
+	-- Box: any of its three sides. Cylinder: only its length (local z).
+	local sides = o.type == 2 and { 3 } or { 1, 2, 3 }
+	local best
+	for _, k in ipairs(sides) do
+		local field = o.type == 2 and "dims_y" or DIM_FIELDS[k]
+		local maxS = (o[field] or 0) * (1 - keep)
+		for _, sign in ipairs({ 1, -1 }) do
+			-- sign 1 cuts the +axis end, so the centre slides toward -axis.
+			local function trial(s)
+				local h = { b.h[1], b.h[2], b.h[3] }
+				h[k] = h[k] - s / 2
+				return (penetration({ c = V.sub(b.c, V.mul(ax[k], sign * s / 2)), R = b.R, h = h }, other))
+			end
+			if (maxS > 0 and trial(maxS) <= -need) then
+				local lo, hi = 0, maxS
+				for _ = 1, 30 do
+					local mid = (lo + hi) / 2
+					if (trial(mid) <= -need) then hi = mid else lo = mid end
+				end
+				if (not best or hi < best.s) then best = { s = hi, k = k, sign = sign, field = field } end
+			end
+		end
+	end
+	if (not best) then return nil end
+	return best.s, function()
+		MS.objSet(idx, best.field, (o[best.field] or 0) - best.s)
+		MS.setObjPos(idx, V.sub(b.c, V.mul(ax[best.k], best.sign * best.s / 2)))
+	end
+end
+
+-- keys: the nodes to fix. pickMover(ka, kb) returns the key that should be
+-- trimmed first; the other one is tried if that can't be. Triangles are never
+-- trimmed (their slices are rebuilt from the triangle's corners).
+-- Returns how many trims were made, the biggest cut, and overlaps left unfixed.
+local function trimNodes(keys, pickMover)
+	local count, biggest, failed = 0, 0, 0
+	for _ = 1, 6 do
+		local any = false
+		failed = 0
+		for i = 1, #keys do
+			for j = i + 1, #keys do
+				local ka, kb = keys[i], keys[j]
+				for _, a in ipairs(MS.nodeObjs(ka)) do
+					for _, b in ipairs(MS.nodeObjs(kb)) do
+						if (MS.objs[a] and MS.objs[b] and penetration(weldBox(a), weldBox(b)) > 0) then
+							local order = { { a, b, ka }, { b, a, kb } }
+							if (pickMover(ka, kb) == kb) then order = { order[2], order[1] } end
+							local done = false
+							for _, t in ipairs(order) do
+								if (not done and t[3]:sub(1, 1) ~= "t") then
+									local s, apply = trimPlan(t[1], weldBox(t[2]))
+									if (s) then
+										apply()
+										count, biggest, done, any = count + 1, math.max(biggest, s), true, true
+									end
+								end
+							end
+							if (not done) then failed = failed + 1 end
+						end
+					end
+				end
+			end
+		end
+		if (not any) then break end
+	end
+	return count, biggest, failed
+end
+
+-- ---------------------------------------------------------------------------
+-- Single-axis rotations. In-game test: a welded arch whose blocks were turned on
+-- two axes (rot -90 0 -22.5 ...) pulled itself straight, while the same arch
+-- with each block turned on one axis only (rot 0 -22.5 0, sides swapped to
+-- match) kept its curve. The game works out a link's locked angle in a way that
+-- only matches the pieces when they're turned around one axis. A box looks the
+-- same whichever way its sides are labelled, so before welding each box is
+-- relabelled (sides swapped) to the equivalent turn with the fewest axes.
+-- ---------------------------------------------------------------------------
+local BOX_TURNS
+
+-- The 24 ways to relabel a box's axes: new axis k is old axis p[k] (times sign).
+local function boxTurns()
+	if (BOX_TURNS) then return BOX_TURNS end
+	BOX_TURNS = {}
+	local perms = { { 1, 2, 3 }, { 1, 3, 2 }, { 2, 1, 3 }, { 2, 3, 1 }, { 3, 1, 2 }, { 3, 2, 1 } }
+	for _, p in ipairs(perms) do
+		for _, sx in ipairs({ 1, -1 }) do
+			for _, sy in ipairs({ 1, -1 }) do
+				for _, sz in ipairs({ 1, -1 }) do
+					local sg = { sx, sy, sz }
+					local S = { { 0, 0, 0 }, { 0, 0, 0 }, { 0, 0, 0 } }
+					for k = 1, 3 do S[p[k]][k] = sg[k] end
+					local det = S[1][1] * (S[2][2] * S[3][3] - S[2][3] * S[3][2])
+						- S[1][2] * (S[2][1] * S[3][3] - S[2][3] * S[3][1])
+						+ S[1][3] * (S[2][1] * S[3][2] - S[2][2] * S[3][1])
+					if (det > 0) then BOX_TURNS[#BOX_TURNS + 1] = { S = S, p = p } end
+				end
+			end
+		end
+	end
+	return BOX_TURNS
+end
+
+local function axesUsed(x, y, z)
+	local n = 0
+	for _, a in ipairs({ x, y, z }) do
+		if (math.abs(a) > 0.05) then n = n + 1 end
+	end
+	return n
+end
+
+-- Rewrites one object to an equivalent single-axis turn if it can.
+-- Returns "changed", "ok" (already one axis or less) or "multi" (can't be).
+local function makeSingleAxis(idx)
+	local o = MS.objs[idx]
+	if (not o) then return "ok" end
+	local cur = axesUsed(o.rot_x or 0, o.rot_y or 0, o.rot_z or 0)
+	if (cur <= 1) then return "ok" end
+	if (o.type == 0) then
+		-- A sphere looks the same however it's turned.
+		MS.objSet(idx, "rot_x", 0); MS.objSet(idx, "rot_y", 0); MS.objSet(idx, "rot_z", 0)
+		return "changed"
+	end
+	local m = MS.meta[idx]
+	if (m and m.useModel) then return "multi" end -- relabelling would turn its 3D model
+	local R = MS.objRot(idx)
+	local best
+	for _, t in ipairs(boxTurns()) do
+		-- A cylinder's length runs along its own z, so z has to stay z.
+		if (o.type ~= 2 or t.p[3] == 3) then
+			local x, y, z = M.toEuler(M.mul(R, t.S))
+			local n = axesUsed(x, y, z)
+			if (not best or n < best.n) then best = { n = n, x = x, y = y, z = z, t = t } end
+		end
+	end
+	if (not best or best.n > 1) then return "multi" end
+	local function clean(a) return math.abs(a) > 0.05 and a or 0 end
+	if (o.type ~= 2) then
+		local dims = { o.dims_x or 0, o.dims_y or 0, o.dims_z or 0 }
+		local p = best.t.p
+		MS.objSet(idx, "dims_x", dims[p[1]]); MS.objSet(idx, "dims_y", dims[p[2]]); MS.objSet(idx, "dims_z", dims[p[3]])
+	end
+	MS.objSet(idx, "rot_x", clean(best.x)); MS.objSet(idx, "rot_y", clean(best.y)); MS.objSet(idx, "rot_z", clean(best.z))
+	return "changed"
+end
+
+-- objs: object indices. Returns how many were rewritten and how many can't be.
+local function makeAllSingleAxis(objs)
+	local changed, multi = 0, 0
+	for _, idx in ipairs(objs) do
+		if (not isTriSlice(idx)) then
+			local r = makeSingleAxis(idx)
+			if (r == "changed") then changed = changed + 1 elseif (r == "multi") then multi = multi + 1 end
+		end
+	end
+	return changed, multi
+end
+
+local function axisMsg(changed, multi)
+	local msg = ""
+	if (changed > 0) then
+		msg = " Turned " .. changed .. " piece" .. (changed == 1 and "" or "s") .. " around one axis only (same look, sides relabelled) so the game keeps their angle."
+	end
+	if (multi > 0) then
+		msg = msg .. " " .. multi .. " piece" .. (multi == 1 and " is" or "s are") .. " turned on more than one axis and can't be rewritten - their welds may pull straight in game."
+	end
+	return msg
+end
+
+local function trimmedMsg(count, biggest, failed)
+	local msg = ""
+	if (count > 0) then
+		msg = string.format(" Trimmed overlapping pieces to fit (%d cut%s, biggest %.3f).", count, count == 1 and "" or "s", biggest)
+	end
+	if (failed > 0) then
+		msg = msg .. " " .. failed .. " overlap" .. (failed == 1 and "" or "s") .. " couldn't be trimmed without cutting a piece below 20%."
+	end
+	return msg
 end
 
 function MS.weldPlan(list)
@@ -1165,6 +1544,13 @@ function MS.weldSelection()
 		return
 	end
 	MS.pushUndo("Weld")
+	lightened = 0
+	local axisChanged, axisMulti = makeAllSingleAxis(list)
+	-- Trim the smaller piece of each overlapping pair.
+	local _, selNodes = MS.selKeys()
+	local moves, biggest, failed = trimNodes(selNodes, function(ka, kb)
+		return nodeVolume(ka) < nodeVolume(kb) and ka or kb
+	end)
 	local boxes, touching = MS.weldPlan(list)
 
 	table.sort(touching, function(x, y) return x.dist < y.dist end)
@@ -1175,8 +1561,11 @@ function MS.weldSelection()
 	end
 	for _, idx in ipairs(list) do parent[idx] = idx end
 	local existing = linkedPairs()
+	local stiffened = 0
 	for _, pr in ipairs(touching) do
-		if (existing[pr.a .. ":" .. pr.b]) then
+		local j = existing[pr.a .. ":" .. pr.b]
+		if (j) then
+			if (stiffenPair(pr.a, pr.b)) then stiffened = stiffened + 1 end
 			local ra, rb = find(pr.a), find(pr.b)
 			if (ra ~= rb) then parent[ra] = rb end
 		end
@@ -1189,7 +1578,7 @@ function MS.weldSelection()
 		if (overlaps) then overlapping = overlapping + 1 end
 		if ((ra ~= rb or overlaps) and not existing[pr.a .. ":" .. pr.b]) then
 			local pos = contactPoint(boxes[pr.a], boxes[pr.b])
-			if (hinge(pr.a, pr.b, pos, { 1, 0, 0 }, { hi = 0, lo = 0, visible = false })) then
+			if (weldLink(pr.a, pr.b, pos)) then
 				parent[ra] = rb
 				made = made + 1
 			end
@@ -1200,19 +1589,181 @@ function MS.weldSelection()
 	for _, idx in ipairs(list) do groups[find(idx)] = true end
 	local nGroups = MS.count(groups)
 	MS.markDirty()
-	if (made == 0) then
+	if (made == 0 and stiffened == 0 and moves == 0 and axisChanged == 0) then
 		table.remove(MS.undoStack)
 		MS.toast(#touching == 0 and "None of the selected objects touch - move them together first"
 			or "Already welded")
 		return
 	end
-	local msg = "Welded with " .. made .. " locked link" .. (made == 1 and "" or "s")
+	local msg = made > 0 and ("Welded " .. made .. " joint" .. (made == 1 and "" or "s"))
+		or "Already welded"
+	if (stiffened > 0) then msg = msg .. ", upgraded " .. stiffened .. " existing weld" .. (stiffened == 1 and "" or "s") end
 	if (nGroups > 1) then
 		msg = msg .. " - " .. nGroups .. " separate groups (some pieces don't touch)"
 	else
 		msg = msg .. ". Untick Static to make it move as one piece"
 	end
-	MS.toast(msg)
+	MS.toast(msg .. "." .. trimmedMsg(moves, biggest, failed) .. lightMsg() .. axisMsg(axisChanged, axisMulti))
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+end
+
+-- Every parent/child pair in the selected branches, as { parent = key, child = key }.
+local function branchPairs()
+	local H = MS.hier()
+	local _, list = MS.selKeys()
+	local out, seen = {}, {}
+	for _, key in ipairs(list) do
+		for _, c in ipairs(MS.descendants(key, H)) do
+			if (not seen[c]) then
+				seen[c] = true
+				out[#out + 1] = { parent = H.parent[c], child = c }
+			end
+		end
+	end
+	return out, #list
+end
+
+-- The two closest objects between two nodes (a triangle node has several slices).
+local function closestPair(pk, ck, boxes)
+	local best, ba, bb = math.huge, nil, nil
+	for _, a in ipairs(MS.nodeObjs(pk)) do
+		boxes[a] = boxes[a] or weldBox(a)
+		for _, b in ipairs(MS.nodeObjs(ck)) do
+			boxes[b] = boxes[b] or weldBox(b)
+			local d = V.dist(boxes[a].c, boxes[b].c)
+			if (d < best) then best, ba, bb = d, a, b end
+		end
+	end
+	return ba, bb
+end
+
+-- Every link index between two nodes.
+local function nodeLinks(pk, ck, existing)
+	local out = {}
+	for _, a in ipairs(MS.nodeObjs(pk)) do
+		for _, b in ipairs(MS.nodeObjs(ck)) do
+			local j = existing[a .. ":" .. b]
+			if (j) then out[#out + 1] = j end
+		end
+	end
+	return out
+end
+
+function MS.weldToChildren()
+	local pairsList, nSel = branchPairs()
+	if (nSel == 0) then
+		MS.toast("Select a parent first")
+		return
+	end
+	if (#pairsList == 0) then
+		MS.toast("The selection has no children to weld")
+		return
+	end
+	if (#pairsList > 300) then
+		MS.toast("That branch is very big - weld at most 300 children at a time")
+		return
+	end
+	MS.pushUndo("Weld to children")
+	lightened = 0
+	-- Every node in the selected branches, parents included. Of an overlapping
+	-- pair, the one lower in the hierarchy is trimmed (smaller one if level).
+	local H = MS.hier()
+	local branch, inBranch = {}, {}
+	local function addKey(k)
+		if (not inBranch[k]) then inBranch[k] = true; branch[#branch + 1] = k end
+	end
+	for _, pr in ipairs(pairsList) do addKey(pr.parent); addKey(pr.child) end
+	local function depth(k)
+		local n, p = 0, H.parent[k]
+		while (p) do n = n + 1; p = H.parent[p] end
+		return n
+	end
+	local branchObjs = {}
+	for _, k in ipairs(branch) do
+		for _, idx in ipairs(MS.nodeObjs(k)) do branchObjs[#branchObjs + 1] = idx end
+	end
+	local axisChanged, axisMulti = makeAllSingleAxis(branchObjs)
+	local moves, biggest, failed = trimNodes(branch, function(ka, kb)
+		local da, db = depth(ka), depth(kb)
+		if (da > db or (da == db and nodeVolume(ka) < nodeVolume(kb))) then return ka end
+		return kb
+	end)
+	local existing, boxes = linkedPairs(), {}
+	local made, already, stiffened = 0, 0, 0
+	for _, pr in ipairs(pairsList) do
+		local links = nodeLinks(pr.parent, pr.child, existing)
+		if (#links > 0) then
+			already = already + 1
+			for _, j in ipairs(links) do
+				if (MS.ejs[j] and stiffenPair(MS.ejs[j].obj1, MS.ejs[j].obj2)) then stiffened = stiffened + 1 end
+			end
+		else
+			local a, b = closestPair(pr.parent, pr.child, boxes)
+			if (a and b) then
+				local pos = contactPoint(boxes[a], boxes[b])
+				local n = weldLink(a, b, pos)
+				if (n) then
+					existing[a .. ":" .. b], existing[b .. ":" .. a] = n, n
+					made = made + 1
+				end
+			end
+		end
+	end
+	MS.markDirty()
+	if (made == 0 and (stiffened > 0 or moves > 0 or axisChanged > 0)) then
+		local msg = stiffened > 0 and ("Upgraded " .. stiffened .. " existing weld" .. (stiffened == 1 and "" or "s") .. " to the new rigid kind.")
+			or "Already welded to its children."
+		MS.toast(msg .. trimmedMsg(moves, biggest, failed) .. lightMsg() .. axisMsg(axisChanged, axisMulti))
+		if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+		return
+	end
+	if (made == 0) then
+		table.remove(MS.undoStack)
+		MS.toast(already > 0 and "Already welded to its children" or "Couldn't weld - the game refused the links")
+		return
+	end
+	local msg = "Welded to " .. made .. " child" .. (made == 1 and "" or "ren") .. " (whole branch)"
+	if (already > 0) then msg = msg .. ", " .. already .. " already welded" end
+	MS.toast(msg .. ". Untick Static to make it move as one piece." .. trimmedMsg(moves, biggest, failed) .. lightMsg() .. axisMsg(axisChanged, axisMulti))
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+end
+
+function MS.unweldChildren()
+	local pairsList, nSel = branchPairs()
+	if (nSel == 0 or #pairsList == 0) then
+		MS.toast(nSel == 0 and "Select a parent first" or "The selection has no children")
+		return
+	end
+	local want = {}
+	for _, pr in ipairs(pairsList) do
+		for _, a in ipairs(MS.nodeObjs(pr.parent)) do
+			for _, b in ipairs(MS.nodeObjs(pr.child)) do
+				want[a .. ":" .. b], want[b .. ":" .. a] = true, true
+			end
+		end
+	end
+	local doomed = {}
+	for j, ej in pairs(MS.ejs) do
+		if (ej.obj1 and ej.obj2 and want[ej.obj1 .. ":" .. ej.obj2]) then doomed[#doomed + 1] = j end
+	end
+	if (#doomed == 0) then
+		MS.toast("No links between the selection and its children")
+		return
+	end
+	MS.pushUndo("Unweld children")
+	local touched = {}
+	for _, j in ipairs(doomed) do
+		local ej = MS.ejs[j]
+		if (ej and ej.obj1) then touched[ej.obj1] = true end
+		if (ej and ej.obj2) then touched[ej.obj2] = true end
+		pcall(delete_mod_envjoint, j)
+		MS.ejs[j] = nil
+		if (MS.ejSel == j) then MS.ejSel = nil end
+	end
+	local restored = restoreWeights(touched)
+	local weightMsg = restored > 0 and (". " .. restored .. " piece" .. (restored == 1 and "" or "s") .. " got their weight back") or ""
+	MS.markDirty()
+	MS.toast("Removed " .. #doomed .. " parent-child link" .. (#doomed == 1 and "" or "s") .. weightMsg)
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
 
@@ -1228,12 +1779,18 @@ function MS.unweldSelection()
 		return
 	end
 	MS.pushUndo("Unweld")
+	local touched = {}
 	for _, j in ipairs(doomed) do
+		local ej = MS.ejs[j]
+		if (ej and ej.obj1) then touched[ej.obj1] = true end
+		if (ej and ej.obj2) then touched[ej.obj2] = true end
 		pcall(delete_mod_envjoint, j)
 		MS.ejs[j] = nil
 		if (MS.ejSel == j) then MS.ejSel = nil end
 	end
+	local restored = restoreWeights(touched)
+	local weightMsg = restored > 0 and (". " .. restored .. " piece" .. (restored == 1 and "" or "s") .. " got their weight back") or ""
 	MS.markDirty()
-	MS.toast("Removed " .. #doomed .. " link" .. (#doomed == 1 and "" or "s") .. " between the selected objects")
+	MS.toast("Removed " .. #doomed .. " link" .. (#doomed == 1 and "" or "s") .. " between the selected objects" .. weightMsg)
 	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
 end
