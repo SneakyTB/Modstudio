@@ -150,16 +150,59 @@ function MS.reportError(err)
 	end
 end
 
+local function tryEnterModMaker()
+	local ok, res = pcall(enter_mod_maker_mode)
+	if (not ok) then return "error: " .. tostring(res) end
+	return "returned " .. tostring(res)
+end
+
 function MS.start()
 	MS.loadSettings()
-	closeBuiltinModMaker()
-	if (not modMakerActive()) then
-		pcall(enter_mod_maker_mode)
-	end
-	if (not modMakerActive()) then
-		echo("Mod Studio: the mod maker isn't available right now (leave multiplayer / stop the replay and try again).")
+	pcall(remove_hooks, "modstudio_boot")
+	if (type(enter_mod_maker_mode) ~= "function" or type(is_mod_maker_mode_active) ~= "function") then
+		echo("Mod Studio: this Toribash version has no mod maker for scripts (enter_mod_maker_mode is missing). Update the game and try again.")
 		return
 	end
+	closeBuiltinModMaker()
+	if (modMakerActive()) then
+		MS.finishStart()
+		return
+	end
+	local attempts = { tryEnterModMaker() }
+	if (modMakerActive()) then
+		MS.finishStart()
+		return
+	end
+	echo("Mod Studio: opening the mod maker...")
+	local frames, classicTried = 0, false
+	add_hook("draw2d", "modstudio_boot", function()
+		frames = frames + 1
+		if (modMakerActive()) then
+			remove_hooks("modstudio_boot")
+			closeBuiltinModMaker()
+			local ok, err = pcall(MS.finishStart)
+			if (not ok) then echo("Mod Studio error: " .. tostring(err)) end
+			return
+		end
+		if (frames == 30) then
+			table.insert(attempts, tryEnterModMaker())
+		elseif (frames == 90 and not classicTried and type(runCmd) == "function") then
+			classicTried = true
+			echo("Mod Studio: still not in the mod maker - loading " .. (MS.DEFAULT_MOD or "classic.tbm") .. " and trying again")
+			pcall(runCmd, "lm " .. (MS.DEFAULT_MOD or "classic.tbm"), false)
+		elseif (frames == 110) then
+			table.insert(attempts, tryEnterModMaker())
+		elseif (frames >= 200) then
+			remove_hooks("modstudio_boot")
+			local okA, active = pcall(is_mod_maker_mode_active)
+			echo("Mod Studio: couldn't open the mod maker. Make sure you're in a normal match (not a replay, multiplayer room or the main menu) and try /ls modstudio.lua again.")
+			echo("Mod Studio: details for the developer - enter_mod_maker_mode " .. table.concat(attempts, ", ")
+				.. "; is_mod_maker_mode_active " .. (okA and tostring(active) or ("error: " .. tostring(active))))
+		end
+	end)
+end
+
+function MS.finishStart()
 	MS.active = true
 	MS.testMode = false
 	MS.undoStack, MS.redoStack = {}, {}
