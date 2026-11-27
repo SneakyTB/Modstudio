@@ -1067,7 +1067,6 @@ function MS.exportChecked(name)
 end
 
 MS.WELD_TOUCH = 0.03
-MS.WELD_GAP = 0.005
 
 local function weldBox(idx)
 	local o = MS.objs[idx]
