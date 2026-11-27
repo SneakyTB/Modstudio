@@ -1910,6 +1910,11 @@ function UI.tabLinks(pane)
 		end, tip = "Lock touching pieces together with links so a non-static build holds together in game (Ctrl+Z undoes)", disabled = #sel < 2 },
 		{ "Unweld selection", MS.unweldSelection, tip = "Remove every link between the selected objects", disabled = #sel < 2 }
 	})
+	y = y + ROW + GAP
+	buttonRow(pane, PAD, y, w, ROW, {
+		{ "Weld to children", MS.weldToChildren, tip = "Lock every child (and grandchild...) of the selection to its parent with a hidden link, touching or not, so the branch holds together in game (Ctrl+Z undoes)", disabled = #sel < 1 },
+		{ "Unweld children", MS.unweldChildren, tip = "Remove the links between each parent and its children in the selected branch", disabled = #sel < 1 }
+	})
 	y = y + ROW + GAP * 3
 
 	local keys = MS.sortedKeys(MS.ejs)
@@ -1975,7 +1980,6 @@ function UI.tabLinks(pane)
 		num("Max speed", "maxvelocity", 1, { min = 0 }),
 		num("Hardness", "hardness", 0.05, { min = 0 }),
 		num("Bounce", "bounce", 0.05, { min = 0 }),
-		num("Joint type", "type", 1, { int = true, min = 0, tip = "Engine joint type number (0 = hinge)" }),
 		{ kind = "toggle", label = "Visible", get = g("visible"), set = s("visible", "Link visible") }
 	}
 	UI.paged(pane, y, pane.size.h - y - PAD, entries, "links:fields")
