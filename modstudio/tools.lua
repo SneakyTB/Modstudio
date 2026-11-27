@@ -1065,3 +1065,176 @@ function MS.exportChecked(name)
 			{ "Cancel" }
 		})
 end
+
+MS.WELD_TOUCH = 0.03
+MS.WELD_GAP = 0.005
+
+local function weldBox(idx)
+	local o = MS.objs[idx]
+	local e = MS.objExtents(idx)
+	return { c = MS.objPos(idx), R = MS.objRot(idx), h = { e[1] / 2, e[2] / 2, e[3] / 2 },
+		vol = math.max(1e-6, e[1] * e[2] * e[3]), sphere = o.type == 0 }
+end
+
+local function boxAxes(b) return { M.col(b.R, 1), M.col(b.R, 2), M.col(b.R, 3) } end
+
+local function projRadius(b, ax, L)
+	return b.h[1] * abs(V.dot(ax[1], L)) + b.h[2] * abs(V.dot(ax[2], L)) + b.h[3] * abs(V.dot(ax[3], L))
+end
+
+local function boxOverlap(a, b)
+	local A, B = boxAxes(a), boxAxes(b)
+	local d = V.sub(b.c, a.c)
+	local tests = { A[1], A[2], A[3], B[1], B[2], B[3] }
+	for i = 1, 3 do
+		for j = 1, 3 do
+			local c = V.cross(A[i], B[j])
+			if (V.len(c) > 1e-6) then tests[#tests + 1] = V.norm(c) end
+		end
+	end
+	local best, bestAxis = math.huge, nil
+	for _, L in ipairs(tests) do
+		local dist = V.dot(d, L)
+		local over = projRadius(a, A, L) + projRadius(b, B, L) - abs(dist)
+		if (over < best) then
+			best = over
+			bestAxis = dist >= 0 and L or V.mul(L, -1)
+		end
+	end
+	return best, bestAxis
+end
+
+local function closestOnBox(b, p)
+	local ax = boxAxes(b)
+	local d = V.sub(p, b.c)
+	local q = V.copy(b.c)
+	for k = 1, 3 do
+		local t = MS.clamp(V.dot(d, ax[k]), -b.h[k], b.h[k])
+		q = V.add(q, V.mul(ax[k], t))
+	end
+	return q
+end
+
+local function contactPoint(a, b)
+	local pa = closestOnBox(a, b.c)
+	local pb = closestOnBox(b, pa)
+	pa = closestOnBox(a, pb)
+	return V.lerp(pa, pb, 0.5)
+end
+
+local function linkedPairs()
+	local set = {}
+	for _, ej in pairs(MS.ejs) do
+		if (ej.obj1 and ej.obj2) then
+			set[ej.obj1 .. ":" .. ej.obj2] = true
+			set[ej.obj2 .. ":" .. ej.obj1] = true
+		end
+	end
+	return set
+end
+
+local function isTriSlice(idx)
+	local m = MS.meta[idx]
+	return m and m.tri and MS.tris[m.tri] and true or false
+end
+
+function MS.weldPlan(list)
+	local boxes = {}
+	for _, idx in ipairs(list) do boxes[idx] = weldBox(idx) end
+	local pairsList = {}
+	for i = 1, #list do
+		for j = i + 1, #list do
+			local a, b = list[i], list[j]
+			local over, axis = boxOverlap(boxes[a], boxes[b])
+			if (over > -MS.WELD_TOUCH) then
+				pairsList[#pairsList + 1] = { a = a, b = b, over = over, axis = axis,
+					dist = V.dist(boxes[a].c, boxes[b].c) }
+			end
+		end
+	end
+	return boxes, pairsList
+end
+
+function MS.weldSelection()
+	local list = MS.selList()
+	if (#list < 2) then
+		MS.toast("Select 2 or more touching objects to weld (Shift+click or Shift+drag)")
+		return
+	end
+	if (#list > 300) then
+		MS.toast("That's a lot of objects - weld at most 300 at a time")
+		return
+	end
+	MS.pushUndo("Weld")
+	local boxes, touching = MS.weldPlan(list)
+
+	table.sort(touching, function(x, y) return x.dist < y.dist end)
+	local parent = {}
+	local function find(x)
+		while (parent[x] and parent[x] ~= x) do x = parent[x] end
+		return x
+	end
+	for _, idx in ipairs(list) do parent[idx] = idx end
+	local existing = linkedPairs()
+	for _, pr in ipairs(touching) do
+		if (existing[pr.a .. ":" .. pr.b]) then
+			local ra, rb = find(pr.a), find(pr.b)
+			if (ra ~= rb) then parent[ra] = rb end
+		end
+	end
+
+	local made, overlapping = 0, 0
+	for _, pr in ipairs(touching) do
+		local ra, rb = find(pr.a), find(pr.b)
+		local overlaps = pr.over > 0.001
+		if (overlaps) then overlapping = overlapping + 1 end
+		if ((ra ~= rb or overlaps) and not existing[pr.a .. ":" .. pr.b]) then
+			local pos = contactPoint(boxes[pr.a], boxes[pr.b])
+			if (hinge(pr.a, pr.b, pos, { 1, 0, 0 }, { hi = 0, lo = 0, visible = false })) then
+				parent[ra] = rb
+				made = made + 1
+			end
+		end
+	end
+
+	local groups = {}
+	for _, idx in ipairs(list) do groups[find(idx)] = true end
+	local nGroups = MS.count(groups)
+	MS.markDirty()
+	if (made == 0) then
+		table.remove(MS.undoStack)
+		MS.toast(#touching == 0 and "None of the selected objects touch - move them together first"
+			or "Already welded")
+		return
+	end
+	local msg = "Welded with " .. made .. " locked link" .. (made == 1 and "" or "s")
+	if (nGroups > 1) then
+		msg = msg .. " - " .. nGroups .. " separate groups (some pieces don't touch)"
+	else
+		msg = msg .. ". Untick Static to make it move as one piece"
+	end
+	MS.toast(msg)
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+end
+
+function MS.unweldSelection()
+	local sel = {}
+	for _, idx in ipairs(MS.selList()) do sel[idx] = true end
+	local doomed = {}
+	for j, ej in pairs(MS.ejs) do
+		if (sel[ej.obj1] and sel[ej.obj2]) then doomed[#doomed + 1] = j end
+	end
+	if (#doomed == 0) then
+		MS.toast("No links between the selected objects")
+		return
+	end
+	MS.pushUndo("Unweld")
+	for _, j in ipairs(doomed) do
+		pcall(delete_mod_envjoint, j)
+		MS.ejs[j] = nil
+		if (MS.ejSel == j) then MS.ejSel = nil end
+	end
+	MS.markDirty()
+	MS.toast("Removed " .. #doomed .. " link" .. (#doomed == 1 and "" or "s") .. " between the selected objects")
+	if (MS.UI and MS.UI.requestRefresh) then MS.UI.requestRefresh() end
+end

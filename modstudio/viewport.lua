@@ -1363,6 +1363,28 @@ function MS.drawFloor3d()
 		end
 	end
 
+	if (MS.settings.showCenter ~= false and MS.dojoCenter) then
+		local okC, c = pcall(MS.dojoCenter)
+		if (okC and c) then
+			local z = lift(0.035, c[1], c[2])
+			local L, rr = 0.35, 0.12
+			for pass = 1, 2 do
+				if (pass == 1) then set_color(0, 0, 0, 0.55) else set_color(1, 0.55, 0.15, 0.95) end
+				local w = pass == 1 and 4.5 or 2.5
+				local zz = pass == 1 and z - 0.004 or z
+				pcall(draw_line_3d, c[1] - L, c[2], zz, c[1] + L, c[2], zz, w)
+				pcall(draw_line_3d, c[1], c[2] - L, zz, c[1], c[2] + L, zz, w)
+				local n = 24
+				for i = 0, n - 1 do
+					local a1, a2 = i / n * math.pi * 2, (i + 1) / n * math.pi * 2
+					pcall(draw_line_3d, c[1] + math.cos(a1) * rr, c[2] + math.sin(a1) * rr, zz,
+						c[1] + math.cos(a2) * rr, c[2] + math.sin(a2) * rr, zz, w)
+				end
+			end
+			pcall(draw_line_3d, c[1], c[2], z, c[1], c[2], z + 0.25, 2.5)
+		end
+	end
+
 	local m = MS.measure
 	if (m and m.a and m.b) then
 		set_color(0.35, 0.9, 1, 0.9)

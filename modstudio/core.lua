@@ -142,6 +142,7 @@ MS.DEFAULT_SETTINGS = {
 	camFix = 0,
 	objLimit = 0,
 	showDojo = true,
+	showCenter = true,
 	modelPreview = true,
 	modelDepth = 2,
 	assetNote = false,

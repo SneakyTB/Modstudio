@@ -1900,6 +1900,13 @@ function UI.tabLinks(pane)
 			end
 		end, disabled = not (MS.ejSel and MS.ejs[MS.ejSel]) }
 	})
+	y = y + ROW + GAP
+	buttonRow(pane, PAD, y, w, ROW, {
+		{ "Weld selection", function()
+			MS.weldSelection()
+		end, tip = "Lock touching pieces together with links so a non-static build holds together in game (Ctrl+Z undoes)", disabled = #sel < 2 },
+		{ "Unweld selection", MS.unweldSelection, tip = "Remove every link between the selected objects", disabled = #sel < 2 }
+	})
 	y = y + ROW + GAP * 3
 
 	local keys = MS.sortedKeys(MS.ejs)
@@ -2676,6 +2683,7 @@ function UI.tabSettings(pane)
 		num("Size step", "scaleStep", 0.01, { min = 0.01 }),
 		{ kind = "header", label = "View" },
 		tog("Show ground grid", "showGrid"),
+		tog("Show the centre between the players", "showCenter", "Orange cross on the floor halfway between the players (the dojo's middle)"),
 		num("Grid size", "gridExtent", 2, { min = 2, max = 100 }),
 		tog("Show object names", "showLabels"),
 		tog("Show links between objects", "showLinks"),
