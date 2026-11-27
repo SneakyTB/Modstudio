@@ -2416,13 +2416,26 @@ function MS.readRules()
 	return t
 end
 
+MS.START_RULES = { engagedistance = true, engageheight = true, engagerotation = true,
+	engageplayerpos = true, engageplayerrot = true }
+
 function MS.applyRules(rules)
 	if (not rules) then return end
 	for name, v in pairs(rules) do
 		if (name ~= "mod" and v ~= MS.getRule(name)) then
 			pcall(set_gamerule, name, tostring(v))
+			if (MS.START_RULES[name]) then MS.startRulesPending = true end
 		end
 	end
+end
+
+function MS.tickStartRules()
+	if (not MS.startRulesPending or MS.testMode or MS.faceFix) then return end
+	local UI = MS.UI
+	if (UI and ((UI.fieldFocused and UI.fieldFocused()) or UI.scrubbing)) then return end
+	MS.startRulesPending = false
+	MS.needRefresh = true
+	MS.flush(true)
 end
 
 MS.ruleShadow = MS.ruleShadow or {}
@@ -2446,6 +2459,7 @@ function MS.setRule(name, value)
 	else
 		MS.ruleShadow[name] = nil
 	end
+	if (MS.START_RULES[name]) then MS.startRulesPending = true end
 	MS.changed = true
 	MS.changedSinceAutosave = true
 end

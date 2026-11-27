@@ -502,9 +502,11 @@ local function scrub(el, get, set, step, o)
 	el:addMouseHandlers(function(_, x)
 			el.scrubX = x
 			el.scrubV = get() or 0
+			UI.scrubbing = true
 			pcall(disable_mouse_camera_movement)
 		end, function()
 			el.scrubX = nil
+			UI.scrubbing = nil
 			pcall(enable_mouse_camera_movement)
 		end, function(x)
 			if (el.hoverState == BTN_DN and el.scrubX) then
@@ -522,6 +524,7 @@ local function scrub(el, get, set, step, o)
 			end
 		end, nil, function()
 			el.scrubX = nil
+			UI.scrubbing = nil
 			pcall(enable_mouse_camera_movement)
 		end)
 end
@@ -2078,11 +2081,10 @@ function UI.tabPlayers(pane)
 					UI.requestRefresh()
 				end }
 			} },
-			{ kind = "header", label = "Start spacing (applied when a match starts)" },
+			{ kind = "header", label = "Start spacing (players update when you finish a value)" },
 			rule("Engage distance", "engagedistance", 5, "How far apart the players start"),
 			rule("Engage height", "engageheight", 5, "How high above the floor they start"),
 			rule("Engage rotation", "engagerotation", 15, "Degrees the players are turned at the start"),
-			{ kind = "buttons", items = { { "Restart match to see it", MS.restartMatch } } },
 			{ kind = "header", label = "Dojo" },
 			{ kind = "choice", label = "Shape", options = { { 0, "Square" }, { 1, "Round" } },
 				get = function() return tonumber(MS.getRule("dojotype")) or 0 end,

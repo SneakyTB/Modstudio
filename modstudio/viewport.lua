@@ -2303,6 +2303,7 @@ end
 
 function MS.onMouseUp(btn, x, y)
 	if (not MS.active) then return end
+	if (btn == 1) then MS.UI.scrubbing = nil end
 	if (btn == 1 and MS.UI.endPointerDrag and MS.UI.endPointerDrag()) then return end
 	if (btn ~= 1) then return end
 	if (G.dojoDrag) then

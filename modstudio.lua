@@ -74,6 +74,7 @@ function MS.tick()
 	if (not MS.testMode and not (MS.calib and not MS.calib.done)) then
 		MS.tickRepair()
 		if (MS.tickFace) then pcall(MS.tickFace) end
+		if (MS.tickStartRules) then pcall(MS.tickStartRules) end
 		MS.tickWorldMap()
 	end
 	MS.UI.tick()
