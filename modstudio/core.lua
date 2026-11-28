@@ -2843,6 +2843,7 @@ function MS.importMod(name)
 		MS.ruleShadow = {}
 		MS.meta, MS.tris = {}, {}
 		MS.reloadAll()
+		if (MS.applyTbmRules) then pcall(MS.applyTbmRules, name) end
 
 		local nm = MS.readModelLines and MS.readModelLines(name) or 0
 		if (nm > 0) then

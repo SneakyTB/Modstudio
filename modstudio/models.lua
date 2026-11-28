@@ -863,6 +863,38 @@ function MS.readModelLines(name)
 	return found
 end
 
+function MS.readTbmRules(name)
+	local text = MS.readBytes(tbmPath(name))
+	if (not text) then return nil end
+	local rules, inRules = {}, false
+	for raw in text:gmatch("[^\n]+") do
+		local line = raw:gsub("\r$", "")
+		if (line:match("^gamerule%s*$")) then
+			inRules = true
+		elseif (line:match("^%S")) then
+			inRules = false
+		elseif (inRules) then
+			local k, v = line:match("^%s+(%S+)%s+(.-)%s*$")
+			if (not k) then k, v = line:match("^%s+(%S+)%s*$"), "" end
+			if (k and k ~= "mod") then rules[k] = v end
+		end
+	end
+	return rules
+end
+
+function MS.applyTbmRules(name)
+	local rules = MS.readTbmRules(name)
+	if (not rules) then return 0 end
+	local n = 0
+	for k, v in pairs(rules) do
+		if (tostring(MS.getRule(k)) ~= v) then
+			MS.setRule(k, v)
+			n = n + 1
+		end
+	end
+	return n
+end
+
 MS.assetCache = MS.assetCache or nil
 
 function MS.assetReport(force)
